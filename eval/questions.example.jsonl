@@ -1,3 +1,11 @@
 {"question":"Comment effectuer une sauvegarde ?","expected_section_keywords":["sauvegarde"],"answerable":true}
 {"question":"Comment gérer les permissions d'un utilisateur ?","expected_section_keywords":["utilisateur","permission"],"answerable":true}
+{"question":"Comment ajouter un nouveau compte ?","expected_section_keywords":["commerce de détail","enregistrer le compte"],"answerable":true}
+{"question":"Comment ouvrir un compte ?","expected_section_keywords":["commerce de détail","enregistrer le compte"],"answerable":true}
+{"question":"Comment enregistrer un compte ?","expected_section_keywords":["commerce de détail","enregistrer le compte"],"answerable":true}
+{"question":"Comment diviser un compte ?","expected_section_keywords":["diviser le compte","table"],"answerable":true}
+{"question":"Comment fonctionne un compte courant client ?","expected_section_keywords":["comptes courant","clients"],"answerable":true}
+{"question":"Comment fonctionne un compte courant fournisseur ?","expected_section_keywords":["comptes courants des fournisseurs","liquidation"],"answerable":true}
+{"question":"Comment créer un utilisateur ?","expected_section_keywords":["gestion des utilisateurs","fichier utilisateurs"],"answerable":true}
+{"question":"Comment passer du mode Tables au mode Comptes ?","expected_section_keywords":["options a","comptes, tables et cartes"],"answerable":true}
 {"question":"Quelle est la couleur préférée du développeur d'ETPOS ?","expected_section_keywords":[],"answerable":false}

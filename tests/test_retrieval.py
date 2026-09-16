@@ -3,7 +3,14 @@ from types import SimpleNamespace
 
 import etpos_assistant.db as db_module
 from etpos_assistant.db import docs_db, init_docs_db
-from etpos_assistant.retrieval import build_fts_query, build_search_plan, search_sections
+from etpos_assistant.retrieval import (
+    RetrievalTuning,
+    build_fts_query,
+    build_search_plan,
+    search_sections,
+    search_sections_with_trace,
+)
+from etpos_assistant.vocabulary import analyze_query
 
 
 def _settings(tmp_path: Path):
@@ -189,3 +196,63 @@ def test_user_concept_beats_unrelated_create_actions(monkeypatch, tmp_path):
 
     rows = search_sections("Comment créer un utilisateur ?", limit=2)
     assert rows[0].heading_path.startswith("GESTION DES UTILISATEURS")
+
+
+def test_query_analysis_separates_intent_object_and_concept():
+    analysis = analyze_query("Comment ajouter un nouveau compte ?")
+    assert analysis.intents == ("CREATE",)
+    assert analysis.objects == ("COMPTE",)
+    assert analysis.qualifiers == ()
+    assert [concept.key for concept in analysis.concepts] == ["COMPTE_VENTE"]
+
+
+def test_sale_account_expansion_uses_domain_vocabulary_not_document_location():
+    plan = build_search_plan("Comment ouvrir un compte ?")
+    concept_queries = [item.query for item in plan if item.label.startswith("COMPTE_VENTE:")]
+    assert concept_queries
+    assert all("commerce" not in query and "detail" not in query for query in concept_queries)
+    assert any("famille" in query and "article" in query for query in concept_queries)
+
+
+def test_retrieval_trace_exposes_variants_and_score_components(monkeypatch, tmp_path):
+    document_id = _create_document(monkeypatch, tmp_path)
+    _insert_section(
+        document_id,
+        order=1,
+        title="Vente",
+        path="Utilisation > Vente",
+        text="Sélectionner Compte, sélectionner famille, sélectionner les articles puis enregistrer le compte.",
+    )
+    _insert_section(
+        document_id,
+        order=2,
+        title="Diviser le compte",
+        path="Restauration > Diviser le compte",
+        text="Diviser le compte d’une table.",
+    )
+
+    rows, trace = search_sections_with_trace("Comment ajouter un compte ?", limit=2)
+    assert rows[0].title == "Vente"
+    assert trace.analysis.intents == ("CREATE",)
+    assert trace.analysis.objects == ("COMPTE",)
+    assert len(trace.variants) > 1
+    assert trace.candidates
+    assert trace.candidates[0].matched_variants
+    assert trace.candidates[0].final_score == trace.candidates[0].rrf_score + trace.candidates[0].signal_score
+
+
+def test_current_account_meanings_are_disambiguated():
+    client = analyze_query("Comment fonctionne un compte courant client ?")
+    supplier = analyze_query("Comment fonctionne un compte courant fournisseur ?")
+    generic = analyze_query("Comment fonctionne un compte courant ?")
+
+    assert [concept.key for concept in client.concepts] == ["COMPTE_COURANT_CLIENT"]
+    assert [concept.key for concept in supplier.concepts] == ["COMPTE_COURANT_FOURNISSEUR"]
+    assert [concept.key for concept in generic.concepts] == ["COMPTE_COURANT"]
+
+
+def test_retrieval_tuning_is_explicit_and_overrideable():
+    tuning = RetrievalTuning(title_weight=3.0, heading_path_weight=2.0, body_weight=1.0)
+    assert tuning.title_weight == 3.0
+    assert tuning.heading_path_weight == 2.0
+    assert tuning.body_weight == 1.0

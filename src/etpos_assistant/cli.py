@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from .config import settings
 from .db import app_db, docs_db, init_all
 from .ingestion import ingest_enabled_sources
-from .retrieval import search_sections
+from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
 
 
@@ -47,10 +47,36 @@ def cmd_ingest(_args) -> None:
 
 def cmd_search(args) -> None:
     init_all()
-    rows = search_sections(args.query, limit=args.limit)
+    if args.debug:
+        rows, trace = search_sections_with_trace(args.query, limit=args.limit)
+        analysis = trace.analysis
+        print("Analyse de requête:")
+        print(f"  normalisée: {analysis.normalized_question}")
+        print(f"  intentions: {', '.join(analysis.intents) or '-'}")
+        print(f"  objets: {', '.join(analysis.objects) or '-'}")
+        print(f"  qualificatifs: {', '.join(analysis.qualifiers) or '-'}")
+        print(f"  concepts: {', '.join(concept.key for concept in analysis.concepts) or '-'}")
+        print("\nVariantes FTS:")
+        for variant in trace.variants:
+            print(f"  {variant.label} poids={variant.weight:.2f} -> {variant.query}")
+            for hit in variant.hits[:5]:
+                print(f"    {hit.rank}. bm25={hit.bm25_score:.4f} id={hit.section_id} {hit.heading_path}")
+        if trace.candidates:
+            print("\nFusion / reranking:")
+            for index, candidate in enumerate(trace.candidates[: max(args.limit, 10)], start=1):
+                print(
+                    f"  {index}. final={candidate.final_score:.4f} rrf={candidate.rrf_score:.4f} "
+                    f"signals={candidate.signal_score:+.4f} bm25={candidate.best_bm25_score:.4f} "
+                    f"id={candidate.section_id} {candidate.heading_path} "
+                    f"via={','.join(candidate.matched_variants)}"
+                )
+    else:
+        rows = search_sections(args.query, limit=args.limit)
+
     if not rows:
         print("Aucun résultat.")
         return
+    print("\nRésultats finaux:")
     for index, row in enumerate(rows, start=1):
         print(f"\n#{index} score={row.score:.4f} {row.heading_path}")
         print(row.source_url)
@@ -71,11 +97,22 @@ def cmd_corpus_stats(_args) -> None:
 
 
 
+def _first_relevant_rank(rows, keywords: list[str]) -> int | None:
+    if not keywords:
+        return None
+    for rank, row in enumerate(rows, start=1):
+        haystack = f"{row.title} {row.heading_path} {row.source_text}".lower()
+        if all(keyword in haystack for keyword in keywords):
+            return rank
+    return None
+
+
 def cmd_eval_retrieval(args) -> None:
     init_all()
     path = args.path
     total = 0
     hits = 0
+    reciprocal_rank_sum = 0.0
     for raw in open(path, encoding="utf-8"):
         raw = raw.strip()
         if not raw:
@@ -83,15 +120,21 @@ def cmd_eval_retrieval(args) -> None:
         item = json.loads(raw)
         if not item.get("answerable", True):
             continue
+        keywords = [str(k).lower() for k in item.get("expected_section_keywords", [])]
+        if not keywords:
+            continue
         total += 1
         rows = search_sections(item["question"], limit=args.limit)
-        keywords = [str(k).lower() for k in item.get("expected_section_keywords", [])]
-        haystacks = [f"{r.title} {r.heading_path} {r.source_text}".lower() for r in rows]
-        hit = bool(haystacks) and all(any(keyword in h for h in haystacks) for keyword in keywords)
+        rank = _first_relevant_rank(rows, keywords)
+        hit = rank is not None
         hits += int(hit)
-        print(("OK " if hit else "KO ") + item["question"])
-    score = (hits / total * 100.0) if total else 0.0
-    print(f"Recall attendu @ {args.limit}: {hits}/{total} ({score:.1f}%)")
+        reciprocal_rank_sum += (1.0 / rank) if rank else 0.0
+        detail = f" rang={rank}" if rank else ""
+        print(("OK " if hit else "KO ") + item["question"] + detail)
+    recall = (hits / total * 100.0) if total else 0.0
+    mrr = (reciprocal_rank_sum / total) if total else 0.0
+    print(f"Recall attendu @ {args.limit}: {hits}/{total} ({recall:.1f}%)")
+    print(f"MRR @ {args.limit}: {mrr:.3f}")
 
 
 def cmd_codex_status(_args) -> None:
@@ -124,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("search", help="Tester directement la recherche FTS5")
     p.add_argument("query")
     p.add_argument("--limit", type=int, default=6)
+    p.add_argument("--debug", action="store_true", help="Afficher l'analyse, les variantes FTS et la fusion des scores")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("corpus-stats", help="Afficher l'état du corpus")

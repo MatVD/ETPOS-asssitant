@@ -16,9 +16,37 @@ CREATE_INTENT_TERMS = (
     "inserer",
 )
 
+INTENT_TERM_GROUPS = (
+    ("CREATE", CREATE_INTENT_TERMS),
+    ("DIVIDE", ("diviser", "division")),
+    ("PRINT", ("imprimer", "impression")),
+    ("TRANSFER", ("transferer", "transfert")),
+    ("CONFIGURE", ("configurer", "configuration", "regler", "parametrer", "passer", "changer")),
+)
+
 ACCOUNT_TERMS = ("compte", "comptes")
 USER_TERMS = ("utilisateur", "utilisateurs", "operateur", "operateurs")
-MODE_TARGET_TERMS = ("compte", "comptes", "table", "tables", "carte", "cartes")
+TABLE_TERMS = ("table", "tables")
+CARD_TERMS = ("carte", "cartes")
+CLIENT_TERMS = ("client", "clients")
+SUPPLIER_TERMS = ("fournisseur", "fournisseurs")
+MODE_TARGET_TERMS = ACCOUNT_TERMS + TABLE_TERMS + CARD_TERMS
+
+OBJECT_TERM_GROUPS = (
+    ("COMPTE", ACCOUNT_TERMS),
+    ("UTILISATEUR", USER_TERMS),
+    ("TABLE", TABLE_TERMS),
+    ("CARTE", CARD_TERMS),
+    ("CLIENT", CLIENT_TERMS),
+    ("FOURNISSEUR", SUPPLIER_TERMS),
+)
+
+QUALIFIER_TERM_GROUPS = (
+    ("COURANT", ("courant", "courants")),
+    ("FOURNISSEUR", ("fournisseur", "fournisseurs")),
+    ("MODE", ("mode", "fonctionnement")),
+    ("VENTE", ("vente", "ventes")),
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +66,27 @@ class ConceptRule:
     excluded_phrases: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class QueryAnalysis:
+    normalized_question: str
+    tokens: tuple[str, ...]
+    intents: tuple[str, ...]
+    objects: tuple[str, ...]
+    qualifiers: tuple[str, ...]
+    concepts: tuple[RetrievalConcept, ...]
+
+
+COMPTE_COURANT = RetrievalConcept(
+    key="COMPTE_COURANT",
+    query_variants=(
+        ("gestion", "compte", "courant"),
+        ("compte", "courant"),
+        ("comptes", "courants"),
+    ),
+    text_signals=("gestion des comptes courants", "compte courant", "comptes courants"),
+    negative_signals=("reconstruction des comptes courants", "enregistrer le compte", "selectionner famille", "selectionner les articles"),
+)
+
 COMPTE_COURANT_CLIENT = RetrievalConcept(
     key="COMPTE_COURANT_CLIENT",
     query_variants=(
@@ -47,18 +96,52 @@ COMPTE_COURANT_CLIENT = RetrievalConcept(
     ),
     path_signals=("gestion des clients", "comptes courant", "comptes courants"),
     text_signals=("compte courant", "reglement client", "recu"),
-    negative_signals=("commerce de detail",),
+    negative_signals=(
+        "gestion de fournisseurs",
+        "gestionde fournisseurs",
+        "reglement fournisseur",
+        "liquidation",
+        "enregistrer le compte",
+        "selectionner famille",
+        "selectionner les articles",
+    ),
+)
+
+COMPTE_COURANT_FOURNISSEUR = RetrievalConcept(
+    key="COMPTE_COURANT_FOURNISSEUR",
+    query_variants=(
+        ("compte", "courant", "fournisseur"),
+        ("comptes", "courants", "fournisseurs"),
+        ("reglement", "fournisseur"),
+        ("liquidation", "fournisseur"),
+    ),
+    path_signals=("gestion de fournisseurs", "gestion des fournisseurs", "comptes courants des fournisseurs"),
+    text_signals=("compte courant", "reglement fournisseur", "liquidation"),
+    negative_signals=(
+        "gestion des clients",
+        "reglement client",
+        "creer recu",
+        "enregistrer le compte",
+        "selectionner famille",
+        "selectionner les articles",
+    ),
 )
 
 COMPTE_VENTE = RetrievalConcept(
     key="COMPTE_VENTE",
     query_variants=(
         ("enregistrer", "compte"),
-        ("commerce", "detail", "compte"),
+        ("compte", "famille", "article"),
         ("mode", "comptes"),
     ),
-    path_signals=("commerce de detail", "options a"),
-    text_signals=("enregistrer le compte", "enregistrer comptes", "mode de fonctionnement"),
+    text_signals=(
+        "enregistrer le compte",
+        "enregistrer comptes",
+        "selectionner compte",
+        "mode de fonctionnement",
+        "selectionner famille",
+        "selectionner les articles",
+    ),
     negative_signals=("compte courant", "comptes courants"),
 )
 
@@ -88,8 +171,21 @@ MODE_FONCTIONNEMENT = RetrievalConcept(
 CONCEPT_RULES = (
     ConceptRule(
         concept=COMPTE_COURANT_CLIENT,
+        required_term_groups=(ACCOUNT_TERMS, ("courant", "courants"), CLIENT_TERMS),
+        any_phrases=("compte courant client", "comptes courants clients"),
+        excluded_phrases=("fournisseur", "fournisseurs"),
+    ),
+    ConceptRule(
+        concept=COMPTE_COURANT_FOURNISSEUR,
+        required_term_groups=(ACCOUNT_TERMS, ("courant", "courants"), SUPPLIER_TERMS),
+        any_phrases=("compte courant fournisseur", "comptes courants fournisseurs"),
+        excluded_phrases=("client", "clients"),
+    ),
+    ConceptRule(
+        concept=COMPTE_COURANT,
         required_term_groups=(ACCOUNT_TERMS, ("courant", "courants")),
         any_phrases=("compte courant", "comptes courants"),
+        excluded_phrases=("client", "clients", "fournisseur", "fournisseurs"),
     ),
     ConceptRule(
         concept=MODE_FONCTIONNEMENT,
@@ -132,11 +228,32 @@ def _rule_matches(rule: ConceptRule, text: str, tokens: set[str]) -> bool:
     return phrase_match or group_match
 
 
-def detect_retrieval_concepts(question: str) -> tuple[RetrievalConcept, ...]:
+def _matched_labels(
+    groups: tuple[tuple[str, tuple[str, ...]], ...],
+    tokens: set[str],
+) -> tuple[str, ...]:
+    return tuple(label for label, terms in groups if any(term in tokens for term in terms))
+
+
+def analyze_query(question: str) -> QueryAnalysis:
     text = normalize_domain_text(question)
-    tokens = set(text.split())
+    token_list = tuple(text.split())
+    tokens = set(token_list)
+
     concepts: list[RetrievalConcept] = []
     for rule in CONCEPT_RULES:
         if _rule_matches(rule, text, tokens) and rule.concept not in concepts:
             concepts.append(rule.concept)
-    return tuple(concepts)
+
+    return QueryAnalysis(
+        normalized_question=text,
+        tokens=token_list,
+        intents=_matched_labels(INTENT_TERM_GROUPS, tokens),
+        objects=_matched_labels(OBJECT_TERM_GROUPS, tokens),
+        qualifiers=_matched_labels(QUALIFIER_TERM_GROUPS, tokens),
+        concepts=tuple(concepts),
+    )
+
+
+def detect_retrieval_concepts(question: str) -> tuple[RetrievalConcept, ...]:
+    return analyze_query(question).concepts
