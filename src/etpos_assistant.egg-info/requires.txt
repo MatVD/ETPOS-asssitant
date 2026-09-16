@@ -1,0 +1,12 @@
+fastapi<0.142,>=0.140
+uvicorn[standard]<0.50,>=0.35
+jinja2<4,>=3.1
+python-multipart<0.1,>=0.0.20
+argon2-cffi<26,>=25.1
+httpx<0.29,>=0.28
+beautifulsoup4<5,>=4.14
+markdown-it-py<5,>=4.0
+
+[dev]
+pytest<10,>=8.4
+pytest-asyncio<2,>=1.1

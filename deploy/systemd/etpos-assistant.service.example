@@ -1,0 +1,24 @@
+[Unit]
+Description=ETPOS Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=etpos-assistant
+Group=etpos-assistant
+WorkingDirectory=/opt/etpos-assistant
+EnvironmentFile=/etc/etpos-assistant.env
+Environment=CODEX_HOME=/var/lib/etpos-assistant/codex
+StateDirectory=etpos-assistant
+ExecStart=/opt/etpos-assistant/.venv/bin/uvicorn etpos_assistant.main:app --host 127.0.0.1 --port 8787 --workers 1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/etpos-assistant/data /opt/etpos-assistant/snapshots /var/lib/etpos-assistant
+
+[Install]
+WantedBy=multi-user.target

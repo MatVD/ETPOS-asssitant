@@ -1,0 +1,21 @@
+{
+  "sources": [
+    {
+      "id": "etpos-user-manual-fr",
+      "name": "Manuel utilisateur ETPOS - Français",
+      "url": "https://www.etcloud.pt/downloads/webcontents/manuel-utilisateur-etpos-fr.html",
+      "type": "manual",
+      "priority": 100,
+      "enabled": true
+    },
+    {
+      "id": "etpos-support-fr",
+      "name": "Support ETPOS - Français",
+      "url": "https://www.etpos.pt/fr/suporte",
+      "type": "support",
+      "priority": 60,
+      "enabled": false,
+      "note": "Désactivé par défaut tant que son parsing n'est pas validé par les tests de corpus."
+    }
+  ]
+}

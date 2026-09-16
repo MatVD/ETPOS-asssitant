@@ -1,0 +1,3 @@
+{"question":"Comment effectuer une sauvegarde ?","expected_section_keywords":["sauvegarde"],"answerable":true}
+{"question":"Comment gérer les permissions d'un utilisateur ?","expected_section_keywords":["utilisateur","permission"],"answerable":true}
+{"question":"Quelle est la couleur préférée du développeur d'ETPOS ?","expected_section_keywords":[],"answerable":false}

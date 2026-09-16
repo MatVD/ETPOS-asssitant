@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}ETPOS Assistant{% endblock %}
+{% block body %}
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <a class="brand" href="/">
+        <span class="brand-mark small" aria-hidden="true">E</span>
+        <span>ETPOS Assistant</span>
+      </a>
+      <a class="new-chat" href="/">+ Nouvelle conversation</a>
+    </div>
+    <nav class="conversation-list" aria-label="Conversations">
+      {% for conversation in conversations %}
+        <a href="/c/{{ conversation['id'] }}" class="conversation-link {% if conversation_id == conversation['id'] %}active{% endif %}">
+          {{ conversation['title'] }}
+        </a>
+      {% else %}
+        <p class="sidebar-empty">Aucune conversation.</p>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-foot">
+      <span class="user-name">{{ user['username'] }}</span>
+      <form action="/logout" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="text-button" type="submit">Déconnexion</button>
+      </form>
+    </div>
+  </aside>
+
+  <main class="chat-main" data-conversation-id="{{ conversation_id or '' }}">
+    <header class="chat-header">
+      <div>
+        <p class="eyebrow">Source contrôlée</p>
+        <h1>Assistant documentaire ETPOS</h1>
+      </div>
+      <span class="status-badge">FTS5 + citations</span>
+    </header>
+
+    <section id="messages" class="messages" aria-live="polite">
+      {% if not messages %}
+        <div class="empty-state" id="empty-state">
+          <div class="empty-icon" aria-hidden="true">?</div>
+          <h2>Pose une question sur ETPOS</h2>
+          <p>Les réponses sont fondées sur les sections du corpus local. Si le corpus ne suffit pas, l'assistant doit l'indiquer.</p>
+          <div class="suggestions">
+            <button type="button" class="suggestion">Comment effectuer une sauvegarde ?</button>
+            <button type="button" class="suggestion">Comment gérer les permissions d'un utilisateur ?</button>
+          </div>
+        </div>
+      {% endif %}
+
+      {% for message in messages %}
+        <article class="message {{ message.role }}">
+          <div class="message-label">{% if message.role == 'user' %}Vous{% else %}ETPOS Assistant{% endif %}</div>
+          <div class="message-body">
+            {% if message.role == 'assistant' %}{{ message.html|safe }}{% else %}<p>{{ message.content }}</p>{% endif %}
+          </div>
+          {% if message.citations %}
+          <div class="citations">
+            {% for citation in message.citations %}
+              <a class="citation-card" href="{{ citation.internal_url }}">
+                <strong>{{ citation.source_id }} — {{ citation.heading_path or citation.title }}</strong>
+                <span>{{ citation.document_name }}{% if citation.version %} · {{ citation.version }}{% endif %}</span>
+              </a>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </section>
+
+    <form id="chat-form" class="composer">
+      <label for="message-input" class="sr-only">Question</label>
+      <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" required></textarea>
+      <button id="send-button" type="submit" class="send-button">Envoyer</button>
+      <p class="composer-note">Les réponses peuvent être incomplètes si la documentation indexée ne couvre pas la question.</p>
+    </form>
+  </main>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Source — ETPOS Assistant{% endblock %}
+{% block body %}
+<main class="source-shell">
+  <a href="/" class="back-link" id="back-link">← Retour</a>
+  <section class="source-card">
+    <p class="eyebrow">Source indexée</p>
+    <h1>{{ section['heading_path'] or section['title'] }}</h1>
+    <dl class="metadata-grid">
+      <div><dt>Document</dt><dd>{{ section['document_name'] }}</dd></div>
+      <div><dt>Version</dt><dd>{{ section['detected_version'] or 'Non détectée' }}</dd></div>
+      <div><dt>Révision</dt><dd>{{ section['detected_revision_date'] or 'Non détectée' }}</dd></div>
+      <div><dt>Récupération</dt><dd>{{ section['retrieved_at'] }}</dd></div>
+    </dl>
+    <div class="source-text">{{ section['source_text'] }}</div>
+    <div class="source-actions">
+      <a href="{{ section['source_url'] }}" rel="noopener noreferrer" target="_blank">Ouvrir la source officielle</a>
+    </div>
+    {% if images %}
+      <details class="image-references">
+        <summary>Images associées ({{ images|length }})</summary>
+        <ul>
+        {% for image in images %}
+          <li><a href="{{ image.url }}" target="_blank" rel="noopener noreferrer">{{ image.alt or image.url }}</a></li>
+        {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Connexion — ETPOS Assistant{% endblock %}
+{% block body %}
+<main class="login-shell">
+  <section class="login-card">
+    <div class="brand-mark" aria-hidden="true">E</div>
+    <div>
+      <p class="eyebrow">Documentation interne</p>
+      <h1>ETPOS Assistant</h1>
+      <p class="muted">Connecte-toi pour interroger la documentation ETPOS indexée localement.</p>
+    </div>
+    {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+    <form action="/login" method="post" class="stack-form">
+      <label>
+        <span>Identifiant</span>
+        <input name="username" type="text" autocomplete="username" required autofocus maxlength="120">
+      </label>
+      <label>
+        <span>Mot de passe</span>
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="primary-button">Se connecter</button>
+    </form>
+  </section>
+</main>
+{% endblock %}
