@@ -4,7 +4,7 @@ from etpos_assistant.ingestion.parser import parse_html
 
 
 def test_parser_extracts_sections_and_metadata():
-    html = Path("tests/fixtures/sample_manual.html").read_text(encoding="utf-8")
+    html = (Path(__file__).parent / "fixtures" / "sample_manual.html").read_text(encoding="utf-8")
     parsed = parse_html(html, "https://www.etcloud.pt/manual.html")
     assert parsed.version == "V5.34"
     assert parsed.revision_date == "2026-01-30"

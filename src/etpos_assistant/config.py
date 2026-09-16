@@ -35,6 +35,7 @@ class Settings:
     data_dir: Path = Path(os.getenv("ETPOS_DATA_DIR", "./data"))
     snapshot_dir: Path = Path(os.getenv("ETPOS_SNAPSHOT_DIR", "./snapshots"))
     cookie_secure: bool = _as_bool(os.getenv("ETPOS_COOKIE_SECURE"), False)
+    public_origin: str = os.getenv("ETPOS_PUBLIC_ORIGIN", "").strip().rstrip("/")
     session_hours: int = int(os.getenv("ETPOS_SESSION_HOURS", "12"))
     provider: str = os.getenv("ETPOS_PROVIDER", "mock").strip().lower()
     codex_binary: str = os.getenv("CODEX_BINARY", "codex")

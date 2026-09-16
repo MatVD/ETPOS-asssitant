@@ -12,6 +12,7 @@ from ..config import settings
 from ..db import app_db
 from ..security import (
     SESSION_COOKIE,
+    client_ip,
     create_session,
     delete_session,
     hash_password,
@@ -29,10 +30,7 @@ def _now() -> str:
 
 
 def _remote_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:64]
-    return (request.client.host if request.client else "unknown")[:64]
+    return client_ip(request)
 
 
 def _rate_limited(username: str, remote_ip: str) -> bool:

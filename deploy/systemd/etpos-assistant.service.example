@@ -11,7 +11,7 @@ WorkingDirectory=/opt/etpos-assistant
 EnvironmentFile=/etc/etpos-assistant.env
 Environment=CODEX_HOME=/var/lib/etpos-assistant/codex
 StateDirectory=etpos-assistant
-ExecStart=/opt/etpos-assistant/.venv/bin/uvicorn etpos_assistant.main:app --host 127.0.0.1 --port 8787 --workers 1
+ExecStart=/opt/etpos-assistant/.venv/bin/uvicorn etpos_assistant.main:app --host 127.0.0.1 --port 8787 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

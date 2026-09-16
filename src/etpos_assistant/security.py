@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import secrets
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
+from fastapi import Request
 from argon2.exceptions import InvalidHashError, VerifyMismatchError, VerificationError
 
 from .config import settings
@@ -18,6 +21,54 @@ PASSWORD_HASHER = PasswordHasher(
     salt_len=16,
 )
 SESSION_COOKIE = "__Host-etpos_session" if settings.cookie_secure else "etpos_session"
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _peer_is_loopback(request: Request) -> bool:
+    if not request.client:
+        return False
+    try:
+        return ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        return False
+
+
+def client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    if _peer_is_loopback(request):
+        forwarded = request.headers.get("x-real-ip", "").strip()
+        if forwarded:
+            try:
+                ipaddress.ip_address(forwarded)
+                return forwarded[:64]
+            except ValueError:
+                pass
+    return peer[:64]
+
+
+def same_origin_request(request: Request) -> bool:
+    if request.method.upper() not in UNSAFE_METHODS:
+        return True
+
+    source = (request.headers.get("origin") or request.headers.get("referer") or "").strip()
+    if not source:
+        return not settings.is_production
+
+    parsed = urlsplit(source)
+    source_origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}" if parsed.scheme and parsed.netloc else ""
+    if not source_origin:
+        return False
+
+    if settings.public_origin:
+        return source_origin == settings.public_origin.lower()
+
+    scheme = request.url.scheme
+    if _peer_is_loopback(request):
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+        if forwarded_proto in {"http", "https"}:
+            scheme = forwarded_proto
+    host = request.headers.get("host", "").strip().lower()
+    return bool(host) and source_origin == f"{scheme.lower()}://{host}"
 
 
 def utcnow() -> datetime:

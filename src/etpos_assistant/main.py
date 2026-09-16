@@ -6,10 +6,12 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_all
+from .security import same_origin_request
 from .routers import auth_router, chat_router, health_router, pages_router, sources_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -28,7 +30,10 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent /
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or secrets.token_hex(12)
-    response = await call_next(request)
+    if not same_origin_request(request):
+        response = PlainTextResponse("Requête cross-origin refusée.", status_code=403)
+    else:
+        response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
