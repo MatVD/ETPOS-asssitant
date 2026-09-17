@@ -29,6 +29,8 @@ def ready():
     try:
         with docs_db() as conn:
             corpus_sections = int(conn.execute("SELECT COUNT(*) AS n FROM sections").fetchone()["n"])
+        if corpus_sections <= 0:
+            errors.append("corpus_empty")
     except Exception:
         errors.append("docs_db")
     if settings.provider == "codex":

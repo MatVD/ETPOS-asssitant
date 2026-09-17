@@ -140,4 +140,28 @@ src/etpos_assistant/
   static/              CSS et JS
 ```
 
+## CI/CD GitHub Actions
+
+Le workflow `.github/workflows/ci.yml` exécute les tests sur les pull requests et les pushes vers `main`. Après un push direct ou fusionné sur `main`, le job `deploy` s'exécute uniquement si les tests ont réussi.
+
+Le déploiement utilise l'environnement GitHub `production` avec :
+
+- variables `VPS_HOST`, `VPS_PORT`, `VPS_USER` ;
+- secrets `VPS_SSH_PRIVATE_KEY`, `VPS_SSH_KNOWN_HOSTS`.
+
+Le VPS doit être bootstrapé une première fois avant d'activer le déploiement automatique : dépôt cloné dans `/opt/etpos-assistant`, environnement Python créé, `/etc/etpos-assistant.env` configuré, Codex authentifié, corpus initialisé et service `etpos-assistant.service` fonctionnel.
+
+À chaque déploiement, `deploy/remote-deploy.sh` :
+
+1. refuse un worktree de production modifié ;
+2. récupère `origin/main` et vérifie que le SHA cible appartient à `main` ;
+3. installe le code et les dépendances du SHA exact ;
+4. initialise les bases de manière idempotente ;
+5. exécute l'évaluation du retrieval ;
+6. redémarre uniquement `etpos-assistant.service` ;
+7. vérifie `/health/ready`, qui exige notamment un corpus documentaire non vide ;
+8. revient automatiquement au SHA précédent si le déploiement échoue après le checkout.
+
+Les bases SQLite, snapshots, secrets et `CODEX_HOME` ne sont pas déployés par Git.
+
 Voir aussi `ARCHITECTURE.md`, `SECURITY.md` et `RESEARCH_DECISIONS.md`.

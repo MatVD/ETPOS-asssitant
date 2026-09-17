@@ -1,4 +1,4 @@
-name: CI
+name: CI / Deploy
 
 on:
   pull_request:
@@ -33,3 +33,62 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  deploy:
+    name: Deploy production
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: etpos-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout deployment script
+        uses: actions/checkout@v7
+
+      - name: Validate deployment configuration
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_PORT: ${{ vars.VPS_PORT }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$VPS_HOST"
+          test -n "$VPS_PORT"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          test -n "$VPS_SSH_KNOWN_HOSTS"
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/etpos_deploy"
+          chmod 600 "$HOME/.ssh/etpos_deploy"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy exact commit
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_PORT: ${{ vars.VPS_PORT }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          ssh \
+            -i "$HOME/.ssh/etpos_deploy" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_SHA'" < deploy/remote-deploy.sh
+
+      - name: Remove temporary SSH key
+        if: always()
+        run: rm -f "$HOME/.ssh/etpos_deploy"

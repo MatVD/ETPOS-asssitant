@@ -4,6 +4,7 @@ set -Eeuo pipefail
 TARGET_SHA="${1:?Usage: remote-deploy.sh <git-sha>}"
 APP_DIR="${ETPOS_APP_DIR:-/opt/etpos-assistant}"
 SERVICE_NAME="${ETPOS_SERVICE_NAME:-etpos-assistant.service}"
+SERVICE_USER="${ETPOS_SERVICE_USER:-etpos-assistant}"
 HEALTH_URL="${ETPOS_HEALTH_URL:-http://127.0.0.1:8787/health/ready}"
 HEALTH_ATTEMPTS="${ETPOS_HEALTH_ATTEMPTS:-30}"
 HEALTH_DELAY_SECONDS="${ETPOS_HEALTH_DELAY_SECONDS:-2}"
@@ -21,7 +22,7 @@ CHECKED_OUT=0
 wait_for_health() {
     local attempt
     for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt++)); do
-        if curl --fail --silent --show-error "$HEALTH_URL" >/dev/null; then
+        if curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "$HEALTH_URL" >/dev/null; then
             return 0
         fi
         sleep "$HEALTH_DELAY_SECONDS"
@@ -50,12 +51,16 @@ trap rollback ERR
 echo "Déploiement $TARGET_SHA (actuel: $PREVIOUS_SHA)"
 git fetch --prune origin main
 git cat-file -e "${TARGET_SHA}^{commit}"
+if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+    echo "Refus du déploiement: $TARGET_SHA n'appartient pas à origin/main." >&2
+    exit 1
+fi
 git checkout --detach "$TARGET_SHA"
 CHECKED_OUT=1
 
 .venv/bin/python -m pip install --disable-pip-version-check -e .
-.venv/bin/etpos-assistant init-db
-.venv/bin/etpos-assistant eval-retrieval --path eval/questions.example.jsonl --limit 5
+sudo -n -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/etpos-assistant" init-db
+sudo -n -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/etpos-assistant" eval-retrieval --path "$APP_DIR/eval/questions.example.jsonl" --limit 5
 
 sudo -n systemctl restart "$SERVICE_NAME"
 sudo -n systemctl is-active --quiet "$SERVICE_NAME"
