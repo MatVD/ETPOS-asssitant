@@ -52,6 +52,9 @@ def same_origin_request(request: Request) -> bool:
 
     source = (request.headers.get("origin") or request.headers.get("referer") or "").strip()
     if not source:
+        fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+        if fetch_site == "same-origin":
+            return True
         return not settings.is_production
 
     parsed = urlsplit(source)

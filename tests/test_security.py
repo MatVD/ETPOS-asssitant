@@ -60,13 +60,25 @@ def test_same_origin_request_uses_explicit_public_origin_in_production():
         valid = _request(
             headers={"origin": "https://agent.matblock.com", "host": "agent.matblock.com"},
         )
+        valid_referer_fallback = _request(
+            headers={"referer": "https://agent.matblock.com/login", "host": "agent.matblock.com"},
+        )
+        valid_fetch_metadata = _request(
+            headers={"sec-fetch-site": "same-origin", "host": "agent.matblock.com"},
+        )
         invalid = _request(
             headers={"origin": "https://evil.example", "host": "agent.matblock.com"},
+        )
+        cross_site = _request(
+            headers={"sec-fetch-site": "cross-site", "host": "agent.matblock.com"},
         )
         missing = _request(headers={"host": "agent.matblock.com"})
 
         assert same_origin_request(valid)
+        assert same_origin_request(valid_referer_fallback)
+        assert same_origin_request(valid_fetch_metadata)
         assert not same_origin_request(invalid)
+        assert not same_origin_request(cross_site)
         assert not same_origin_request(missing)
     finally:
         object.__setattr__(settings, "env", previous_env)
