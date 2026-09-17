@@ -26,6 +26,25 @@
       "min_answered_faqs": 3,
       "min_faq_answer_chars": 30,
       "note": "Activé après validation réelle de l'extraction statique, benchmarks retrieval et revue Codex sur candidate. Les réponses FAQ sont extraites du bundle client officiel sans exécuter JavaScript ; eval/support.jsonl reste un contrat de source bloquant pour les futures candidates."
+    },
+    {
+      "id": "etpos-news-verifone-integration-fr",
+      "name": "Actualité ETPOS - Intégration Verifone - Français",
+      "url": "https://etpos.fr/fr/blog/noticia/etpos-et-verifone-comment-fonctionne-l-integration-des-paiements-et-pourquoi-elle-va-simplifier-votre-activite",
+      "type": "news",
+      "priority": 30,
+      "enabled": false,
+      "validation_profile": "news_article",
+      "validation_benchmarks": [
+        "eval/news.jsonl"
+      ],
+      "min_article_title_chars": 30,
+      "min_article_chars": 800,
+      "required_title_terms": [
+        "ETPOS",
+        "Verifone"
+      ],
+      "note": "Pilote niveau 3 volontairement désactivé. Une actualité reste explicitement déclarée ; aucun crawl automatique du blog. Activation uniquement après inspect-source, validation retrieval sur candidate et revue des réponses Codex."
     }
   ]
 }

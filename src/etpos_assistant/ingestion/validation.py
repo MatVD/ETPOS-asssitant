@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 from bs4 import BeautifulSoup, Tag
 
 
@@ -64,11 +67,64 @@ def _validate_support_faq_answers(source: dict, html: str) -> None:
         )
 
 
+def _validate_news_article(source: dict, html: str) -> None:
+    parsed_url = urlparse(str(source.get("url") or ""))
+    if parsed_url.hostname not in {"etpos.fr", "www.etpos.fr"} or not parsed_url.path.startswith("/fr/blog/"):
+        raise SourceContentError(
+            f"{source['id']}: une actualité française doit provenir explicitement de https://etpos.fr/fr/blog/."
+        )
+
+    soup = BeautifulSoup(html, "html.parser")
+    root = soup.select_one("article") or soup.select_one("main")
+    if not isinstance(root, Tag):
+        raise SourceContentError(f"{source['id']}: aucun contenu principal d'article n'a été détecté.")
+
+    title_node = root.find("h1") or soup.find("h1")
+    title = title_node.get_text(" ", strip=True) if isinstance(title_node, Tag) else ""
+    if len(title) < int(source.get("min_article_title_chars", 20)):
+        raise SourceContentError(f"{source['id']}: titre d'actualité absent ou trop court.")
+
+    required_title_terms = source.get("required_title_terms", [])
+    if not isinstance(required_title_terms, list) or not all(
+        isinstance(term, str) and term.strip() for term in required_title_terms
+    ):
+        raise SourceContentError(f"{source['id']}: required_title_terms doit être une liste de chaînes non vides.")
+    title_casefold = title.casefold()
+    missing_terms = [term for term in required_title_terms if term.casefold() not in title_casefold]
+    if missing_terms:
+        raise SourceContentError(
+            f"{source['id']}: le titre ne contient pas les termes attendus : {', '.join(missing_terms)}."
+        )
+
+    article_text = root.get_text(" ", strip=True)
+    min_article_chars = int(source.get("min_article_chars", 600))
+    if len(article_text) < min_article_chars:
+        raise SourceContentError(
+            f"{source['id']}: contenu d'actualité trop court ({len(article_text)} caractères, "
+            f"minimum attendu {min_article_chars})."
+        )
+
+    time_node = root.find("time")
+    time_value = ""
+    if isinstance(time_node, Tag):
+        time_value = f"{time_node.get('datetime', '')} {time_node.get_text(' ', strip=True)}"
+    date_haystack = f"{time_value} {article_text}"
+    publication_patterns = (
+        r"\b20\d{2}[./-]\d{1,2}[./-]\d{1,2}\b",
+        r"\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b",
+    )
+    if not any(re.search(pattern, date_haystack) for pattern in publication_patterns):
+        raise SourceContentError(f"{source['id']}: aucune date de publication exploitable n'a été détectée.")
+
+
 def validate_source_html(source: dict, html: str) -> None:
     profile = str(source.get("validation_profile") or "").strip().lower()
     if not profile:
         return
     if profile == "support_faq_answers":
         _validate_support_faq_answers(source, html)
+        return
+    if profile == "news_article":
+        _validate_news_article(source, html)
         return
     raise SourceContentError(f"{source['id']}: profil de validation inconnu : {profile}")

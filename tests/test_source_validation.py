@@ -26,6 +26,18 @@ SUPPORT_SOURCE = {
     "min_faq_answer_chars": 20,
 }
 
+NEWS_SOURCE = {
+    "id": "etpos-news-verifone-integration-fr",
+    "name": "Actualité ETPOS - Intégration Verifone - Français",
+    "url": "https://etpos.fr/fr/blog/noticia/etpos-et-verifone-comment-fonctionne-l-integration-des-paiements-et-pourquoi-elle-va-simplifier-votre-activite",
+    "type": "news",
+    "priority": 30,
+    "validation_profile": "news_article",
+    "min_article_title_chars": 30,
+    "min_article_chars": 200,
+    "required_title_terms": ["ETPOS", "Verifone"],
+}
+
 
 def _support_html(*, with_answers: bool) -> str:
     answer_1 = "<div><p>ETPOS permet de configurer des sauvegardes selon les options documentées.</p></div>" if with_answers else ""
@@ -41,6 +53,24 @@ def _support_html(*, with_answers: bool) -> str:
     """
 
 
+def _news_html(*, with_date: bool = True, title: str | None = None) -> str:
+    publication = "<time datetime=\"2026-08-04\">2026.08.04</time>" if with_date else ""
+    article_title = title or "ETPOS et Verifone : comment fonctionne l'intégration des paiements"
+    return f"""
+    <html><body><main><article>
+      <h1>{article_title}</h1>
+      {publication}
+      <p>L'intégration ETPOS et Verifone relie directement le logiciel de facturation au terminal de paiement.</p>
+      <h2>Comment fonctionne l'intégration ETPOS et Verifone, dans la pratique</h2>
+      <p>Le montant à payer est envoyé automatiquement au terminal lorsque le paiement par carte est choisi.</p>
+      <p>La transaction est automatiquement associée au document fiscal correspondant.</p>
+      <h2>Activation</h2>
+      <p>La solution est disponible dans la version Light sans module supplémentaire.</p>
+      <p>Deux modèles sont proposés : location avec mensualité variable ou achat de l'équipement avec paiement unique.</p>
+    </article></main></body></html>
+    """
+
+
 def test_support_validation_rejects_question_only_faq():
     with pytest.raises(SourceContentError, match=r"réponse\(s\) FAQ exploitable"):
         validate_source_html(SUPPORT_SOURCE, _support_html(with_answers=False))
@@ -48,6 +78,26 @@ def test_support_validation_rejects_question_only_faq():
 
 def test_support_validation_accepts_faq_with_real_answers():
     validate_source_html(SUPPORT_SOURCE, _support_html(with_answers=True))
+
+
+def test_news_validation_accepts_explicit_french_blog_article():
+    validate_source_html(NEWS_SOURCE, _news_html())
+
+
+def test_news_validation_rejects_missing_publication_date():
+    with pytest.raises(SourceContentError, match="date de publication"):
+        validate_source_html(NEWS_SOURCE, _news_html(with_date=False))
+
+
+def test_news_validation_rejects_unexpected_title():
+    with pytest.raises(SourceContentError, match="termes attendus"):
+        validate_source_html(NEWS_SOURCE, _news_html(title="Une actualité ETPOS sans intégration de paiement"))
+
+
+def test_news_validation_rejects_non_french_blog_path():
+    source = {**NEWS_SOURCE, "url": "https://etpos.fr/en/blog/news/example"}
+    with pytest.raises(SourceContentError, match="actualité française"):
+        validate_source_html(source, _news_html())
 
 
 @pytest.mark.asyncio
@@ -61,10 +111,13 @@ async def test_ingest_source_fails_closed_before_indexing_question_only_support(
         await service.ingest_source(SUPPORT_SOURCE)
 
 
-def test_support_registry_is_enabled_only_with_quality_gates_declared():
+def test_source_registry_keeps_support_active_and_news_pilot_disabled():
     registry_path = Path(__file__).resolve().parents[1] / "config" / "sources.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     support = next(source for source in registry["sources"] if source["id"] == "etpos-support-fr")
+    news = next(
+        source for source in registry["sources"] if source["id"] == "etpos-news-verifone-integration-fr"
+    )
 
     assert support["enabled"] is True
     assert support["validation_profile"] == "support_faq_answers"
@@ -72,6 +125,21 @@ def test_support_registry_is_enabled_only_with_quality_gates_declared():
     assert "eval/acceptance.jsonl" in registry["validation_benchmarks"]
     assert support["min_answered_faqs"] >= 3
     assert support["url"].startswith("https://etpos.fr/")
+
+    assert news["enabled"] is False
+    assert news["type"] == "news"
+    assert news["priority"] < support["priority"]
+    assert news["validation_profile"] == "news_article"
+    assert news["validation_benchmarks"] == ["eval/news.jsonl"]
+    assert news["url"].startswith("https://etpos.fr/fr/blog/")
+
+    default_benchmarks = service.registry_validation_benchmarks(registry_path)
+    candidate_benchmarks = service.registry_validation_benchmarks(
+        registry_path,
+        extra_source_ids=("etpos-news-verifone-integration-fr",),
+    )
+    assert "eval/news.jsonl" not in default_benchmarks
+    assert "eval/news.jsonl" in candidate_benchmarks
 
 
 def test_source_url_allowlist_includes_official_french_domain_only():
