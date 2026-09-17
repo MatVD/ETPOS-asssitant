@@ -4,7 +4,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..config import settings
 from ..db import docs_db, init_docs_db
+from ..docs_store import build_versions_match, write_build_metadata
 from .fetch import fetch_html
 from .parser import ParsedDocument, parse_html
 
@@ -81,7 +83,12 @@ def index_parsed_source(
     }
 
 
-async def ingest_source(source: dict, *, db_path: Path | None = None) -> dict:
+async def ingest_source(
+    source: dict,
+    *,
+    db_path: Path | None = None,
+    skip_if_unchanged: bool = True,
+) -> dict:
     html, digest, snapshot_path = await fetch_html(source["id"], source["url"])
     parsed = parse_html(html, source["url"])
     return index_parsed_source(
@@ -91,12 +98,21 @@ async def ingest_source(source: dict, *, db_path: Path | None = None) -> dict:
         snapshot_path,
         datetime.now(UTC).isoformat(),
         db_path=db_path,
+        skip_if_unchanged=skip_if_unchanged,
     )
 
 
 async def ingest_enabled_sources(*, db_path: Path | None = None) -> list[dict]:
     init_docs_db(db_path)
+    versions_match = build_versions_match(db_path)
     results = []
     for source in load_registry():
-        results.append(await ingest_source(source, db_path=db_path))
+        results.append(
+            await ingest_source(
+                source,
+                db_path=db_path,
+                skip_if_unchanged=versions_match,
+            )
+        )
+    write_build_metadata(db_path or settings.docs_db)
     return results

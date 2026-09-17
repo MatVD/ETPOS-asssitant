@@ -148,9 +148,9 @@ Chaque cas peut déclarer :
 - latence moyenne et p95 du retrieval ;
 - détail par catégorie.
 
-Baseline locale du corpus ETPOS V5.34 au 17 septembre 2026, avec `K=5` : Recall@5 **92,5 %**, MRR **0,759**, couverture des groupes **88,4 %**, latence p95 d'environ **57 ms**. Les échecs actuels sont conservés dans le benchmark car ils rendent visibles des limites lexicales réelles, notamment « deux moyens de paiement » → règlement mixte et « mode pesée » → mode Balance.
+Baseline locale du corpus ETPOS V5.34 au 17 septembre 2026, avec `K=5` et 47 cas : Recall@5 **100,0 %**, MRR **0,842**, couverture des groupes **97,8 %**, latence p95 d'environ **51 ms**. Le déficit de couverture restant vient du cas ambigu « ouvrir un compte pour un client », pour lequel un seul des deux sens attendus apparaît dans le top 5.
 
-`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS, la présence et la pertinence des citations, ainsi que la latence complète. `--category` et `--max-cases` permettent des campagnes ciblées sans lancer les 45 appels Codex à chaque fois.
+`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS, la présence et la pertinence des citations, ainsi que la latence complète. `--category` et `--max-cases` permettent des campagnes ciblées sans lancer les 47 appels Codex à chaque fois.
 
 L'abstention complète utilise une phrase canonique afin d'être mesurable sans juge LLM. Les hallucinations ne sont volontairement pas notées automatiquement par `eval-answer` : une revue humaine ou un protocole de juge distinct et validé reste nécessaire avant de publier un taux d'hallucination. Le CI/CD de déploiement continue donc d'exécuter uniquement l'évaluation retrieval, déterministe et rapide.
 
@@ -190,7 +190,7 @@ Le VPS doit être bootstrapé une première fois avant d'activer le déploiement
 1. refuse un worktree de production modifié ;
 2. récupère `origin/main` et vérifie que le SHA cible appartient à `main` ;
 3. installe le code et les dépendances du SHA exact ;
-4. exécute le benchmark retrieval sur la `docs.db` existante avec les seuils minimaux Recall@5 ≥ 0,90, MRR ≥ 0,70 et couverture des groupes ≥ 0,85 ;
+4. exécute le benchmark retrieval sur la `docs.db` existante avec les seuils minimaux Recall@5 ≥ 0,95, MRR ≥ 0,80 et couverture des groupes ≥ 0,95 ;
 5. redémarre uniquement `etpos-assistant.service` ; le lifespan FastAPI initialise alors les schémas après l'arrêt de l'ancienne instance ;
 6. vérifie `/health/ready`, qui exige notamment un corpus documentaire non vide ;
 7. revient automatiquement au SHA précédent si le déploiement échoue après le checkout.
@@ -240,11 +240,11 @@ La commande historique `ingest` reste utile pour le développement et le bootstr
 
 1. télécharger en mémoire uniquement les sources activées dans `config/sources.json` ;
 2. comparer leurs hashes avec le manifeste de la base active ;
-3. si le corpus est inchangé, ne rien reconstruire ;
-4. si nécessaire, enregistrer les snapshots et construire une nouvelle base dans `data/docs-candidates/` ;
+3. comparer aussi les versions explicites `PARSER_VERSION` et `INDEX_VERSION` stockées dans `build_metadata` ; si les hashes et ces versions sont inchangés, ne rien reconstruire ;
+4. si une source, la version du parser ou la version d'index a changé, enregistrer les snapshots si nécessaire et reconstruire entièrement une nouvelle base dans `data/docs-candidates/` ;
 5. vérifier l'intégrité SQLite, le schéma, la cohérence de FTS5 et l'absence de sidecars WAL ;
 6. exécuter le benchmark retrieval directement contre la candidate ;
-7. refuser l'activation si les seuils Recall@5 ≥ 0,90, MRR ≥ 0,70 ou couverture ≥ 0,85 ne sont pas atteints ;
+7. refuser l'activation si les seuils Recall@5 ≥ 0,95, MRR ≥ 0,80 ou couverture ≥ 0,95 ne sont pas atteints ;
 8. archiver l'actuelle `docs.db` par hard-link puis activer la candidate avec `os.replace()` sur le même système de fichiers ;
 9. conserver l'ancienne base dans `data/docs-history/` pour rollback et vérification des citations historiques.
 

@@ -31,6 +31,7 @@ CARD_TERMS = ("carte", "cartes")
 CLIENT_TERMS = ("client", "clients")
 SUPPLIER_TERMS = ("fournisseur", "fournisseurs")
 ARTICLE_TERMS = ("article", "articles")
+FAMILY_TERMS = ("famille", "familles")
 MODE_TARGET_TERMS = ACCOUNT_TERMS + TABLE_TERMS + CARD_TERMS
 
 OBJECT_TERM_GROUPS = (
@@ -41,6 +42,7 @@ OBJECT_TERM_GROUPS = (
     ("CLIENT", CLIENT_TERMS),
     ("FOURNISSEUR", SUPPLIER_TERMS),
     ("ARTICLE", ARTICLE_TERMS),
+    ("FAMILLE", FAMILY_TERMS),
 )
 
 QUALIFIER_TERM_GROUPS = (
@@ -180,6 +182,17 @@ ARTICLE = RetrievalConcept(
     text_signals=("gestion des articles", "fichier d articles", "creer des articles"),
 )
 
+FAMILLE = RetrievalConcept(
+    key="FAMILLE",
+    query_variants=(
+        ("gestion", "familles"),
+        ("fichier", "familles"),
+        ("familles", "articles"),
+    ),
+    path_signals=("gestion de familles des articles", "fichier des familles"),
+    text_signals=("les familles font reference aux articles", "fichier des familles"),
+)
+
 REGLEMENT_MIXTE = RetrievalConcept(
     key="REGLEMENT_MIXTE",
     query_variants=(
@@ -231,6 +244,10 @@ CONCEPT_RULES = (
     ConceptRule(
         concept=ARTICLE,
         required_term_groups=(ARTICLE_TERMS,),
+    ),
+    ConceptRule(
+        concept=FAMILLE,
+        required_term_groups=(FAMILY_TERMS,),
     ),
     ConceptRule(
         concept=CARTE_GENERIQUE,

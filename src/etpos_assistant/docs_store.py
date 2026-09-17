@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import settings
+from .docs_versions import INDEX_VERSION, PARSER_VERSION
 
 
 class DocsDatabaseError(RuntimeError):
@@ -97,6 +98,52 @@ def validate_docs_database(path: Path, *, require_delete_journal: bool = True) -
         "fts_rows": fts_rows,
         "journal_mode": journal_mode,
     }
+
+
+def read_build_metadata(path: Path | None = None) -> dict[str, int | str] | None:
+    database = (path or settings.docs_db).resolve()
+    if not database.is_file():
+        return None
+    try:
+        with _readonly_connection(database) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            }
+            if "build_metadata" not in tables:
+                return None
+            row = conn.execute(
+                "SELECT parser_version, index_version, built_at FROM build_metadata WHERE id = 1"
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise DocsDatabaseError(f"Lecture des métadonnées de build impossible : {exc}") from exc
+    return dict(row) if row else None
+
+
+def write_build_metadata(path: Path) -> None:
+    from .db import docs_db
+
+    with docs_db(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO build_metadata(id, parser_version, index_version, built_at)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                parser_version=excluded.parser_version,
+                index_version=excluded.index_version,
+                built_at=excluded.built_at
+            """,
+            (PARSER_VERSION, INDEX_VERSION, datetime.now(UTC).isoformat()),
+        )
+
+
+def build_versions_match(path: Path | None = None) -> bool:
+    metadata = read_build_metadata(path)
+    return bool(
+        metadata
+        and metadata["parser_version"] == PARSER_VERSION
+        and metadata["index_version"] == INDEX_VERSION
+    )
 
 
 def document_manifest(path: Path | None = None) -> dict[str, dict]:

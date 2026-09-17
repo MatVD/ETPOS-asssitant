@@ -75,7 +75,9 @@ def test_project_benchmark_covers_required_categories():
     path = Path(__file__).resolve().parents[1] / "eval" / "benchmark.jsonl"
     cases = load_benchmark(path)
 
-    assert len(cases) == 45
+    assert len(cases) == 47
+    case_ids = {case.case_id for case in cases}
+    assert {"simple-families", "simple-peripherals"} <= case_ids
     assert {case.category for case in cases} >= {
         "simple",
         "procedure",

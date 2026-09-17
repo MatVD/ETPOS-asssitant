@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import etpos_assistant.docs_update as docs_update
+import etpos_assistant.ingestion.service as ingestion_service
 from etpos_assistant.citations import normalize_citation_link
 from etpos_assistant.config import settings
 from etpos_assistant.db import init_docs_db
@@ -18,9 +19,12 @@ from etpos_assistant.docs_store import (
     find_section_reference,
     list_docs_history,
     prune_docs_history,
+    read_build_metadata,
     rollback_docs_database,
     validate_docs_database,
+    write_build_metadata,
 )
+from etpos_assistant.docs_versions import INDEX_VERSION, PARSER_VERSION
 from etpos_assistant.ingestion.parser import parse_html
 from etpos_assistant.ingestion.service import index_parsed_source
 
@@ -52,6 +56,7 @@ def _build_database(path: Path, html: str, snapshot_path: Path) -> tuple[str, st
         db_path=path,
         skip_if_unchanged=False,
     )
+    write_build_metadata(path)
     backup = next(section for section in parsed.sections if section.title == "Sauvegarde")
     return digest, backup.source_url
 
@@ -267,6 +272,78 @@ async def test_candidate_builder_detects_unchanged_then_builds_without_touching_
     assert validate_docs_database(built.candidate_path)["sections"] >= 2
     assert document_manifest(built.candidate_path)[SOURCE["id"]]["content_hash"] == hash_v2
     assert document_manifest(current)[SOURCE["id"]]["content_hash"] == hash_v1
+
+
+@pytest.mark.parametrize(
+    ("metadata_column", "old_version"),
+    (("parser_version", PARSER_VERSION - 1), ("index_version", INDEX_VERSION - 1)),
+)
+@pytest.mark.asyncio
+async def test_candidate_builder_rebuilds_when_parser_or_index_version_changes(
+    tmp_path, monkeypatch, metadata_column, old_version
+):
+    fixture = Path(__file__).parent / "fixtures" / "sample_manual.html"
+    html = fixture.read_text(encoding="utf-8")
+    snapshot = tmp_path / "snapshots" / "current.html"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(html, encoding="utf-8")
+    current = tmp_path / "data" / "docs.db"
+    digest, _ = _build_database(current, html, snapshot)
+
+    registry = tmp_path / "sources.json"
+    registry.write_text(json.dumps({"sources": [SOURCE]}, ensure_ascii=False), encoding="utf-8")
+    candidates = tmp_path / "data" / "docs-candidates"
+
+    with sqlite3.connect(current) as conn:
+        conn.execute(f"UPDATE build_metadata SET {metadata_column} = ? WHERE id = 1", (old_version,))
+        conn.commit()
+
+    async def same_download(_url: str):
+        return html, digest
+
+    monkeypatch.setattr(docs_update, "download_html", same_download)
+    rebuilt = await docs_update.build_docs_candidate(
+        registry_path=registry,
+        current_path=current,
+        candidate_dir=candidates,
+    )
+
+    assert rebuilt.status == "candidate"
+    assert rebuilt.changed_sources == ()
+    assert rebuilt.candidate_path is not None
+    metadata = read_build_metadata(rebuilt.candidate_path)
+    assert metadata is not None
+    assert metadata["parser_version"] == PARSER_VERSION
+    assert metadata["index_version"] == INDEX_VERSION
+    assert metadata["built_at"]
+
+
+@pytest.mark.asyncio
+async def test_dev_ingest_reindexes_when_build_version_changes(tmp_path, monkeypatch):
+    fixture = Path(__file__).parent / "fixtures" / "sample_manual.html"
+    html = fixture.read_text(encoding="utf-8")
+    snapshot = tmp_path / "snapshot.html"
+    snapshot.write_text(html, encoding="utf-8")
+    database = tmp_path / "docs.db"
+    digest, _ = _build_database(database, html, snapshot)
+
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE build_metadata SET parser_version = ? WHERE id = 1", (PARSER_VERSION - 1,))
+        conn.commit()
+
+    async def same_fetch(_source_id: str, _url: str):
+        return html, digest, str(snapshot)
+
+    monkeypatch.setattr(ingestion_service, "fetch_html", same_fetch)
+    monkeypatch.setattr(ingestion_service, "load_registry", lambda: [SOURCE])
+
+    results = await ingestion_service.ingest_enabled_sources(db_path=database)
+
+    assert results[0]["status"] == "indexed"
+    metadata = read_build_metadata(database)
+    assert metadata is not None
+    assert metadata["parser_version"] == PARSER_VERSION
+    assert metadata["index_version"] == INDEX_VERSION
 
 
 def test_prune_docs_history_with_zero_keep_preserves_every_archived_database(tmp_path):

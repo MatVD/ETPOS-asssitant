@@ -42,7 +42,7 @@ Ces sauvegardes locales protègent contre la corruption applicative et les erreu
 
 ## Corpus
 
-L'ingestion conserve un snapshot HTML brut dans `snapshots/`, puis produit des sections structurées avec : URL, type de source, priorité, titre, chemin de titres, ancre, version détectée, date de révision détectée, hash et texte exact.
+L'ingestion conserve un snapshot HTML brut dans `snapshots/`, puis produit des sections structurées avec : URL, type de source, priorité, titre, chemin de titres, ancre, version détectée, date de révision détectée, hash et texte exact. La base documentaire stocke aussi des métadonnées de build avec une `PARSER_VERSION` et une `INDEX_VERSION` explicites.
 
 Le texte exact est conservé pour les citations. Un texte normalisé séparé sert à la recherche.
 
@@ -50,7 +50,7 @@ Le texte exact est conservé pour les citations. Un texte normalisé séparé se
 
 `docs.db` est reconstructible et pratiquement en lecture seule pendant le fonctionnement normal. Le runtime utilise donc `journal_mode=DELETE` plutôt que WAL afin que l'index actif soit un fichier SQLite autonome, sans sidecars susceptibles de rendre un remplacement atomique ambigu.
 
-La commande `ingest` reste un outil de développement/bootstrap. En production, `update-docs-db` applique le pipeline suivant : téléchargement des seules sources déclarées, comparaison des hashes avec le manifeste actif, reconstruction complète dans `data/docs-candidates/`, validation SQLite/FTS, benchmark retrieval de la candidate, puis activation uniquement si les seuils qualité sont satisfaits.
+La commande `ingest` reste un outil de développement/bootstrap. En production, `update-docs-db` applique le pipeline suivant : téléchargement des seules sources déclarées, comparaison des hashes avec le manifeste actif et comparaison des versions explicites du parser/index, reconstruction complète dans `data/docs-candidates/` dès qu'une source ou une de ces versions change, validation SQLite/FTS, benchmark retrieval de la candidate, puis activation uniquement si les seuils qualité sont satisfaits. Une ancienne `docs.db` sans métadonnées de build reste lisible pour l'historique et les citations, mais elle est reconstruite lors du prochain contrôle de mise à jour.
 
 La candidate est construite sur le même système de fichiers que `docs.db`. Avant activation, l'index actif est préservé dans `data/docs-history/` par hard-link ; `os.replace()` publie ensuite atomiquement la candidate. Les lecteurs ayant déjà ouvert l'ancien inode peuvent finir leur requête, tandis que les nouvelles connexions ouvrent immédiatement le nouvel index. Le rollback suit le même mécanisme dans l'autre sens.
 
@@ -92,7 +92,7 @@ La seconde couche, `eval-answer`, utilise le provider Codex et réemploie le mê
 
 Le taux d'hallucination n'est pas calculé automatiquement : il nécessite une revue humaine ou un protocole de juge distinct dont la fiabilité aura été validée. Le déploiement automatique continue donc de ne bloquer que sur l'évaluation retrieval, rapide et déterministe ; l'évaluation Codex peut être exécutée séparément par catégorie ou sur un sous-ensemble de cas.
 
-Baseline locale ETPOS V5.34 au 17 septembre 2026, K=5 : Recall@5 92,5 %, MRR 0,759, couverture des groupes 88,4 %. Les échecs lexicaux observés restent volontairement dans le benchmark afin de mesurer les progrès réels.
+Baseline locale ETPOS V5.34 au 17 septembre 2026, K=5, 47 cas : Recall@5 100,0 %, MRR 0,842, couverture des groupes 97,8 %. Le benchmark couvre explicitement notamment les familles et les périphériques ; le déficit de couverture restant concerne un cas volontairement ambigu sur le sens de « compte ».
 
 ## Embeddings
 

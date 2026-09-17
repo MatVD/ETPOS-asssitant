@@ -106,6 +106,13 @@ def init_docs_db(path: Path | None = None) -> None:
             )
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS build_metadata (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                parser_version INTEGER NOT NULL,
+                index_version INTEGER NOT NULL,
+                built_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_key TEXT NOT NULL UNIQUE,

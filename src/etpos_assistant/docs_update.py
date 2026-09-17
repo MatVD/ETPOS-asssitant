@@ -7,7 +7,13 @@ from pathlib import Path
 
 from .config import settings
 from .db import init_docs_db
-from .docs_store import DocsDatabaseError, document_manifest, validate_docs_database
+from .docs_store import (
+    DocsDatabaseError,
+    build_versions_match,
+    document_manifest,
+    validate_docs_database,
+    write_build_metadata,
+)
 from .ingestion.fetch import download_html, save_snapshot
 from .ingestion.parser import parse_html
 from .ingestion.service import index_parsed_source, load_registry
@@ -86,7 +92,9 @@ async def build_docs_candidate(
         )
     )
 
-    if not changed_sources and not removed_sources and current.is_file():
+    versions_match = build_versions_match(current)
+
+    if not changed_sources and not removed_sources and current.is_file() and versions_match:
         return DocsUpdateCandidate(
             status="unchanged",
             candidate_path=None,
@@ -135,6 +143,7 @@ async def build_docs_candidate(
                     skip_if_unchanged=False,
                 )
             )
+        write_build_metadata(candidate)
         validate_docs_database(candidate, require_delete_journal=True)
     except Exception:
         _remove_sqlite_files(candidate)
