@@ -24,6 +24,12 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _default_backup_dir() -> str:
+    if os.getenv("ETPOS_ENV", "development").strip().lower() == "production":
+        return "/var/lib/etpos-assistant/backups"
+    return "./backups"
+
+
 _load_local_env()
 
 
@@ -34,6 +40,9 @@ class Settings:
     port: int = int(os.getenv("ETPOS_PORT", "8787"))
     data_dir: Path = Path(os.getenv("ETPOS_DATA_DIR", "./data"))
     snapshot_dir: Path = Path(os.getenv("ETPOS_SNAPSHOT_DIR", "./snapshots"))
+    backup_dir: Path = Path(os.getenv("ETPOS_BACKUP_DIR", _default_backup_dir()))
+    backup_retention_days: int = int(os.getenv("ETPOS_BACKUP_RETENTION_DAYS", "30"))
+    docs_history_keep: int = int(os.getenv("ETPOS_DOCS_HISTORY_KEEP", "0"))
     cookie_secure: bool = _as_bool(os.getenv("ETPOS_COOKIE_SECURE"), False)
     public_origin: str = os.getenv("ETPOS_PUBLIC_ORIGIN", "").strip().rstrip("/")
     session_hours: int = int(os.getenv("ETPOS_SESSION_HOURS", "12"))
@@ -50,6 +59,14 @@ class Settings:
     @property
     def docs_db(self) -> Path:
         return self.data_dir / "docs.db"
+
+    @property
+    def docs_candidates_dir(self) -> Path:
+        return self.data_dir / "docs-candidates"
+
+    @property
+    def docs_history_dir(self) -> Path:
+        return self.data_dir / "docs-history"
 
     @property
     def is_production(self) -> bool:

@@ -9,6 +9,10 @@ __pycache__/
 
 data/*.db
 data/*.db-*
+data/docs-candidates/
+data/docs-history/
+backups/*.db
+backups/*.tmp
 snapshots/*.html
 !data/.gitkeep
 !snapshots/.gitkeep

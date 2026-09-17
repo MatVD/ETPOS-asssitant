@@ -28,8 +28,8 @@ def app_db() -> Iterator[sqlite3.Connection]:
 
 
 @contextmanager
-def docs_db() -> Iterator[sqlite3.Connection]:
-    conn = _connect(settings.docs_db)
+def docs_db(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    conn = _connect(path or settings.docs_db)
     try:
         yield conn
         conn.commit()
@@ -95,12 +95,17 @@ def init_app_db() -> None:
         )
 
 
-def init_docs_db() -> None:
-    settings.ensure_dirs()
-    with docs_db() as conn:
+def init_docs_db(path: Path | None = None) -> None:
+    target = path or settings.docs_db
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with docs_db(target) as conn:
+        journal_mode = str(conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]).lower()
+        if journal_mode != "delete":
+            raise sqlite3.OperationalError(
+                f"Impossible de basculer {target} en journal_mode=DELETE (mode={journal_mode})"
+            )
         conn.executescript(
             """
-            PRAGMA journal_mode = WAL;
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_key TEXT NOT NULL UNIQUE,

@@ -117,8 +117,42 @@ etpos-assistant ingest
 etpos-assistant search "sauvegarde"
 etpos-assistant corpus-stats
 etpos-assistant codex-status
-etpos-assistant eval-retrieval --path eval/questions.example.jsonl
+etpos-assistant backup-app-db
+etpos-assistant verify-app-backup /var/lib/etpos-assistant/backups/app-<timestamp>.db
+etpos-assistant restore-app-db /var/lib/etpos-assistant/backups/app-<timestamp>.db --target /tmp/app-restore-test.db
+etpos-assistant eval-retrieval --path eval/benchmark.jsonl
+etpos-assistant eval-answer --path eval/benchmark.jsonl --category menu_path --max-cases 5
+etpos-assistant update-docs-db --dry-run
+etpos-assistant docs-history
+etpos-assistant rollback-docs-db data/docs-history/docs-<timestamp>-<hash>.db
 ```
+
+## Benchmark qualité ETPOS
+
+Le benchmark principal est `eval/benchmark.jsonl`. Il couvre actuellement 45 cas répartis entre questions simples, procédures, chemins de menus, synonymes, concepts métier ambigus, réponses partielles et questions non répondables.
+
+Chaque cas peut déclarer :
+
+- des groupes de sections documentaires attendues ;
+- un niveau de réponse `full`, `partial` ou `none` ;
+- `expected_heading_paths`, qui décrit l'arborescence du manuel ;
+- `expected_menu_paths`, réservé aux vrais chemins de navigation dans l'interface ETPOS ;
+- des faits obligatoires à retrouver dans la réponse finale ;
+- une note expliquant les ambiguïtés particulières du cas.
+
+`eval-retrieval` mesure actuellement de façon déterministe :
+
+- Recall@K ;
+- MRR@K ;
+- couverture des groupes de passages attendus ;
+- latence moyenne et p95 du retrieval ;
+- détail par catégorie.
+
+Baseline locale du corpus ETPOS V5.34 au 17 septembre 2026, avec `K=5` : Recall@5 **92,5 %**, MRR **0,759**, couverture des groupes **88,4 %**, latence p95 d'environ **57 ms**. Les échecs actuels sont conservés dans le benchmark car ils rendent visibles des limites lexicales réelles, notamment « deux moyens de paiement » → règlement mixte et « mode pesée » → mode Balance.
+
+`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS, la présence et la pertinence des citations, ainsi que la latence complète. `--category` et `--max-cases` permettent des campagnes ciblées sans lancer les 45 appels Codex à chaque fois.
+
+L'abstention complète utilise une phrase canonique afin d'être mesurable sans juge LLM. Les hallucinations ne sont volontairement pas notées automatiquement par `eval-answer` : une revue humaine ou un protocole de juge distinct et validé reste nécessaire avant de publier un taux d'hallucination. Le CI/CD de déploiement continue donc d'exécuter uniquement l'évaluation retrieval, déterministe et rapide.
 
 ## Structure
 
@@ -156,12 +190,77 @@ Le VPS doit être bootstrapé une première fois avant d'activer le déploiement
 1. refuse un worktree de production modifié ;
 2. récupère `origin/main` et vérifie que le SHA cible appartient à `main` ;
 3. installe le code et les dépendances du SHA exact ;
-4. initialise les bases de manière idempotente ;
-5. exécute l'évaluation du retrieval ;
-6. redémarre uniquement `etpos-assistant.service` ;
-7. vérifie `/health/ready`, qui exige notamment un corpus documentaire non vide ;
-8. revient automatiquement au SHA précédent si le déploiement échoue après le checkout.
+4. exécute le benchmark retrieval sur la `docs.db` existante avec les seuils minimaux Recall@5 ≥ 0,90, MRR ≥ 0,70 et couverture des groupes ≥ 0,85 ;
+5. redémarre uniquement `etpos-assistant.service` ; le lifespan FastAPI initialise alors les schémas après l'arrêt de l'ancienne instance ;
+6. vérifie `/health/ready`, qui exige notamment un corpus documentaire non vide ;
+7. revient automatiquement au SHA précédent si le déploiement échoue après le checkout.
+
+L'initialisation de `docs.db` n'est volontairement plus lancée avant le redémarrage : le runtime documentaire passe en `journal_mode=DELETE`, et modifier le mode de journalisation pendant que l'ancienne instance sert encore des lectures créerait une contention inutile.
 
 Les bases SQLite, snapshots, secrets et `CODEX_HOME` ne sont pas déployés par Git.
+
+## Sauvegarde et restauration de `app.db`
+
+`app.db` contient les utilisateurs, sessions et conversations et n'est pas reconstructible. La commande `backup-app-db` utilise l'API de sauvegarde SQLite, valide le fichier obtenu, puis applique la rétention. En production, le répertoire par défaut est `/var/lib/etpos-assistant/backups` et la rétention est de 30 jours. Les variables `ETPOS_BACKUP_DIR` et `ETPOS_BACKUP_RETENTION_DAYS` permettent de les surcharger.
+
+Les exemples systemd `deploy/systemd/etpos-assistant-backup.service.example` et `deploy/systemd/etpos-assistant-backup.timer.example` prévoient quatre sauvegardes quotidiennes. Après installation des unités dans `/etc/systemd/system/`, activer uniquement le timer :
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now etpos-assistant-backup.timer
+sudo systemctl list-timers etpos-assistant-backup.timer
+```
+
+Tester périodiquement une restauration sans toucher à la production :
+
+```bash
+cd /opt/etpos-assistant
+sudo -u etpos-assistant .venv/bin/etpos-assistant \
+  restore-app-db /var/lib/etpos-assistant/backups/app-<timestamp>.db \
+  --target /var/lib/etpos-assistant/restore-test/app.db
+```
+
+Puis exécuter `verify-app-backup` sur la base restaurée ou l'ouvrir avec un contrôle applicatif dédié. Pour restaurer réellement `app.db`, arrêter d'abord le service et exécuter la commande sous l'utilisateur `etpos-assistant` :
+
+```bash
+sudo systemctl stop etpos-assistant.service
+cd /opt/etpos-assistant
+sudo -u etpos-assistant .venv/bin/etpos-assistant \
+  restore-app-db /var/lib/etpos-assistant/backups/app-<timestamp>.db \
+  --confirm-service-stopped
+sudo systemctl start etpos-assistant.service
+sudo systemctl is-active etpos-assistant.service
+```
+
+Une sauvegarde locale sur le même VPS ne couvre pas la perte du serveur lui-même. Une copie hors machine est donc une étape de durcissement distincte.
+
+## Mise à jour atomique de `docs.db`
+
+La commande historique `ingest` reste utile pour le développement et le bootstrap. Elle ne doit pas être utilisée comme mécanisme automatique de mise à jour en production. Le flux de production est `update-docs-db` :
+
+1. télécharger en mémoire uniquement les sources activées dans `config/sources.json` ;
+2. comparer leurs hashes avec le manifeste de la base active ;
+3. si le corpus est inchangé, ne rien reconstruire ;
+4. si nécessaire, enregistrer les snapshots et construire une nouvelle base dans `data/docs-candidates/` ;
+5. vérifier l'intégrité SQLite, le schéma, la cohérence de FTS5 et l'absence de sidecars WAL ;
+6. exécuter le benchmark retrieval directement contre la candidate ;
+7. refuser l'activation si les seuils Recall@5 ≥ 0,90, MRR ≥ 0,70 ou couverture ≥ 0,85 ne sont pas atteints ;
+8. archiver l'actuelle `docs.db` par hard-link puis activer la candidate avec `os.replace()` sur le même système de fichiers ;
+9. conserver l'ancienne base dans `data/docs-history/` pour rollback et vérification des citations historiques.
+
+Tester tout le pipeline sans activation :
+
+```bash
+cd /opt/etpos-assistant
+sudo -u etpos-assistant .venv/bin/etpos-assistant update-docs-db --dry-run
+```
+
+Puis, après inspection, lancer sans `--dry-run` pour autoriser l'activation. `docs-history` liste les versions archivées et `rollback-docs-db <fichier>` réactive atomiquement une version de l'historique.
+
+`ETPOS_DOCS_HISTORY_KEEP=0` est la valeur par défaut : **0 signifie conserver toutes les versions**. Cette politique est volontaire, car les anciennes conversations doivent rester capables d'ouvrir exactement les passages qui avaient servi à leurs réponses. Une valeur positive peut imposer une rétention limitée, au prix de perdre cette garantie pour les versions supprimées.
+
+Les nouvelles citations stockent le hash du document et utilisent `/sources/view` plutôt qu'un simple ID SQLite. Lors de l'affichage, les anciennes citations sont également normalisées vers cette route stable ; si elles sont antérieures à l'ajout du hash, l'historique documentaire est consulté avant la base courante pour éviter de servir silencieusement une section modifiée.
+
+Les exemples `deploy/systemd/etpos-assistant-docs-update.service.example` et `deploy/systemd/etpos-assistant-docs-update.timer.example` prévoient un contrôle quotidien avec activation seulement après validation. Ils sont fournis comme modèles et **ne sont pas installés ni activés automatiquement**.
 
 Voir aussi `ARCHITECTURE.md`, `SECURITY.md` et `RESEARCH_DECISIONS.md`.

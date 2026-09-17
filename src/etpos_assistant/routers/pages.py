@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ..citations import normalize_citation_link
 from ..db import app_db
 from ..markdown import render_safe_markdown
 from .deps import current_session
@@ -34,7 +35,10 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
                     (conversation_id,),
                 ).fetchall()
                 for row in rows:
-                    citations = json.loads(row["citations_json"] or "[]")
+                    citations = [
+                        normalize_citation_link(citation)
+                        for citation in json.loads(row["citations_json"] or "[]")
+                    ]
                     messages.append(
                         {
                             "role": row["role"],

@@ -5,14 +5,16 @@ import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
+from .citations import normalize_citation_link
 from .config import settings
 from .db import app_db
 from .markdown import render_safe_markdown
 from .providers import CodexCliProvider, MockProvider, SourceContext
+from .providers.prompting import ABSTENTION_TEXT
 from .retrieval import RetrievedSection, search_sections
 
 CITATION_RE = re.compile(r"\[S(\d+)\]")
-ABSTENTION = "La documentation ETPOS actuellement indexée ne permet pas de répondre avec certitude à cette question."
+ABSTENTION = ABSTENTION_TEXT
 
 
 def get_provider():
@@ -40,17 +42,19 @@ def _citations(answer: str, sections: list[RetrievedSection]) -> list[dict]:
     for idx in requested:
         section = sections[idx]
         result.append(
-            {
-                "source_id": f"S{idx + 1}",
-                "section_id": section.id,
-                "title": section.title,
-                "heading_path": section.heading_path,
-                "document_name": section.document_name,
-                "version": section.document_version,
-                "revision_date": section.revision_date,
-                "official_url": section.source_url,
-                "internal_url": f"/sources/{section.id}",
-            }
+            normalize_citation_link(
+                {
+                    "source_id": f"S{idx + 1}",
+                    "section_id": section.id,
+                    "title": section.title,
+                    "heading_path": section.heading_path,
+                    "document_name": section.document_name,
+                    "version": section.document_version,
+                    "revision_date": section.revision_date,
+                    "document_hash": section.document_hash,
+                    "official_url": section.source_url,
+                }
+            )
         )
     return result
 
@@ -60,6 +64,13 @@ def _remove_invalid_citations(answer: str, count: int) -> str:
         idx = int(match.group(1))
         return match.group(0) if 1 <= idx <= count else ""
     return CITATION_RE.sub(repl, answer)
+
+
+def finalize_answer(raw_answer: str, sections: list[RetrievedSection]) -> tuple[str, list[dict]]:
+    answer = _remove_invalid_citations(raw_answer.strip(), len(sections))
+    if not answer:
+        answer = ABSTENTION
+    return answer, _citations(answer, sections)
 
 
 async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict]:
@@ -95,10 +106,7 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
             break
         yield {"type": "delta", "text": chunk}
 
-    answer = _remove_invalid_citations("".join(chunks).strip(), len(sections))
-    if not answer:
-        answer = ABSTENTION
-    citations = _citations(answer, sections)
+    answer, citations = finalize_answer("".join(chunks), sections)
     yield {
         "type": "done",
         "text": answer,

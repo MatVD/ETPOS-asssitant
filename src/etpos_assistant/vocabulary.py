@@ -30,6 +30,7 @@ TABLE_TERMS = ("table", "tables")
 CARD_TERMS = ("carte", "cartes")
 CLIENT_TERMS = ("client", "clients")
 SUPPLIER_TERMS = ("fournisseur", "fournisseurs")
+ARTICLE_TERMS = ("article", "articles")
 MODE_TARGET_TERMS = ACCOUNT_TERMS + TABLE_TERMS + CARD_TERMS
 
 OBJECT_TERM_GROUPS = (
@@ -39,6 +40,7 @@ OBJECT_TERM_GROUPS = (
     ("CARTE", CARD_TERMS),
     ("CLIENT", CLIENT_TERMS),
     ("FOURNISSEUR", SUPPLIER_TERMS),
+    ("ARTICLE", ARTICLE_TERMS),
 )
 
 QUALIFIER_TERM_GROUPS = (
@@ -167,12 +169,82 @@ MODE_FONCTIONNEMENT = RetrievalConcept(
     text_signals=("mode de fonctionnement", "comptes tables et cartes", "forme d enregistrement"),
 )
 
+ARTICLE = RetrievalConcept(
+    key="ARTICLE",
+    query_variants=(
+        ("gestion", "articles"),
+        ("fichier", "articles"),
+        ("creer", "articles"),
+    ),
+    path_signals=("gestion des articles", "fichier d articles"),
+    text_signals=("gestion des articles", "fichier d articles", "creer des articles"),
+)
+
+REGLEMENT_MIXTE = RetrievalConcept(
+    key="REGLEMENT_MIXTE",
+    query_variants=(
+        ("moyen", "reglement", "mixte"),
+        ("plus", "un", "moyen", "reglement"),
+    ),
+    path_signals=("gestion des reglements", "utiliser un moyen de reglement mixte"),
+    text_signals=("plus d un moyen de reglement", "especes et carte"),
+)
+
+MODE_BALANCE = RetrievalConcept(
+    key="MODE_BALANCE",
+    query_variants=(
+        ("mode", "balance"),
+        ("mode", "fonctionnement", "balance"),
+        ("mode", "type", "balance"),
+    ),
+    path_signals=("balance", "mode balance"),
+    text_signals=("mode balance", "mode de fonctionnement de type balance", "mode type de balance"),
+)
+
+CARTE_GENERIQUE = RetrievalConcept(
+    key="CARTE_GENERIQUE",
+    query_variants=(
+        ("fichier", "rfid"),
+        ("gestion", "cartes", "consommation"),
+    ),
+    path_signals=("rfid", "cartes de consommation"),
+    text_signals=("fichier de rfid", "gestion des cartes de consommation"),
+)
+
 
 CONCEPT_RULES = (
+    ConceptRule(
+        concept=REGLEMENT_MIXTE,
+        any_phrases=(
+            "reglement mixte",
+            "moyen de reglement mixte",
+            "deux moyens de paiement",
+            "plusieurs moyens de paiement",
+            "paiements differents",
+        ),
+    ),
+    ConceptRule(
+        concept=MODE_BALANCE,
+        any_phrases=("mode pesee", "mode de pesee", "caisse en mode pesee"),
+        required_term_groups=(("pesee", "pesage", "peser"),),
+    ),
+    ConceptRule(
+        concept=ARTICLE,
+        required_term_groups=(ARTICLE_TERMS,),
+    ),
+    ConceptRule(
+        concept=CARTE_GENERIQUE,
+        required_term_groups=(CARD_TERMS, CREATE_INTENT_TERMS),
+    ),
     ConceptRule(
         concept=COMPTE_COURANT_CLIENT,
         required_term_groups=(ACCOUNT_TERMS, ("courant", "courants"), CLIENT_TERMS),
         any_phrases=("compte courant client", "comptes courants clients"),
+        excluded_phrases=("fournisseur", "fournisseurs"),
+    ),
+    ConceptRule(
+        concept=COMPTE_COURANT_CLIENT,
+        required_term_groups=(ACCOUNT_TERMS, CLIENT_TERMS, CREATE_INTENT_TERMS),
         excluded_phrases=("fournisseur", "fournisseurs"),
     ),
     ConceptRule(

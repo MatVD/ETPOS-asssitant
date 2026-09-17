@@ -9,8 +9,32 @@ import subprocess
 from pathlib import Path
 from datetime import UTC, datetime
 
+from .backups import (
+    BackupError,
+    create_app_backup,
+    prune_app_backups,
+    restore_app_database,
+    validate_app_database,
+)
 from .config import settings
 from .db import app_db, docs_db, init_all
+from .docs_store import (
+    DocsDatabaseError,
+    activate_docs_database,
+    list_docs_history,
+    rollback_docs_database,
+    validate_docs_database,
+)
+from .docs_update import build_docs_candidate
+from .evaluation import (
+    BenchmarkError,
+    generate_answer_for_case,
+    load_benchmark,
+    retrieval_threshold_failures,
+    run_retrieval_benchmark,
+    score_answer_case,
+    summarize_answers,
+)
 from .ingestion import ingest_enabled_sources
 from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
@@ -19,6 +43,46 @@ from .security import hash_password
 def cmd_init_db(_args) -> None:
     init_all()
     print("Bases initialisées.")
+
+
+def cmd_backup_app_db(args) -> None:
+    try:
+        backup_path = create_app_backup(settings.app_db, settings.backup_dir)
+        retention_days = (
+            settings.backup_retention_days
+            if args.retention_days is None
+            else args.retention_days
+        )
+        deleted = prune_app_backups(settings.backup_dir, retention_days)
+    except BackupError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Sauvegarde créée : {backup_path}")
+    print(f"Rétention : {retention_days} jour(s), {len(deleted)} ancienne(s) sauvegarde(s) supprimée(s).")
+
+
+def cmd_verify_app_backup(args) -> None:
+    path = Path(args.path).expanduser()
+    try:
+        validate_app_database(path)
+    except BackupError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Sauvegarde valide : {path}")
+
+
+def cmd_restore_app_db(args) -> None:
+    backup_path = Path(args.path).expanduser()
+    target_path = Path(args.target).expanduser() if args.target else settings.app_db
+    live_target = target_path.resolve() == settings.app_db.resolve()
+    if live_target and not args.confirm_service_stopped:
+        raise SystemExit(
+            "Refus de restaurer app.db sans --confirm-service-stopped. "
+            "Arrêter etpos-assistant.service avant une restauration en production."
+        )
+    try:
+        restored = restore_app_database(backup_path, target_path)
+    except BackupError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Base restaurée : {restored}")
 
 
 def cmd_create_user(args) -> None:
@@ -97,44 +161,214 @@ def cmd_corpus_stats(_args) -> None:
 
 
 
-def _first_relevant_rank(rows, keywords: list[str]) -> int | None:
-    if not keywords:
-        return None
-    for rank, row in enumerate(rows, start=1):
-        haystack = f"{row.title} {row.heading_path} {row.source_text}".lower()
-        if all(keyword in haystack for keyword in keywords):
-            return rank
-    return None
-
-
 def cmd_eval_retrieval(args) -> None:
+    benchmark_path = Path(args.path)
+    docs_path = Path(args.docs_db).expanduser() if args.docs_db else settings.docs_db
+    try:
+        validate_docs_database(docs_path, require_delete_journal=False)
+        cases = load_benchmark(benchmark_path)
+    except (OSError, BenchmarkError, DocsDatabaseError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    results, summary = run_retrieval_benchmark(cases, args.limit, db_path=docs_path)
+    for result in results:
+        case = result.case
+        if case.answerability == "none":
+            print(f"INFO [{case.category}] {case.case_id} non-répondable (non scoré au retrieval)")
+            continue
+        rank = result.first_relevant_rank
+        detail = f"rang={rank}" if rank else "aucun passage attendu"
+        coverage = f"groupes={result.matched_groups}/{result.expected_groups}"
+        print(
+            f"{'OK' if result.hit else 'KO'} [{case.category}] {case.case_id} "
+            f"{detail} {coverage} {result.latency_ms:.1f}ms — {case.question}"
+        )
+    print(
+        f"Recall@{args.limit}: {summary['recall_at_k'] * 100:.1f}% "
+        f"({sum(result.hit for result in results if result.case.answerability != 'none')}/"
+        f"{summary['answerable_cases']})"
+    )
+    print(f"MRR@{args.limit}: {summary['mrr']:.3f}")
+    print(f"Couverture des groupes de passages@{args.limit}: {summary['group_coverage'] * 100:.1f}%")
+    print(
+        f"Latence retrieval: moyenne {summary['latency_mean_ms']:.1f}ms, "
+        f"p95 {summary['latency_p95_ms']:.1f}ms"
+    )
+    print(f"Cas non répondables réservés à l'évaluation réponse: {summary['unanswerable_cases']}")
+    for category, metrics in summary["categories"].items():
+        print(
+            f"  - {category}: n={metrics['cases']} "
+            f"Recall@{args.limit}={metrics['recall_at_k'] * 100:.1f}% "
+            f"MRR={metrics['mrr']:.3f} "
+            f"couverture={metrics['group_coverage'] * 100:.1f}%"
+        )
+
+    try:
+        failures = retrieval_threshold_failures(
+            summary,
+            min_recall=args.min_recall,
+            min_mrr=args.min_mrr,
+            min_group_coverage=args.min_group_coverage,
+        )
+    except BenchmarkError as exc:
+        raise SystemExit(str(exc)) from exc
+    if failures:
+        raise SystemExit("Échec des seuils retrieval : " + "; ".join(failures))
+
+
+async def _run_update_docs(args) -> None:
+    try:
+        candidate = await build_docs_candidate(registry_path=Path(args.registry))
+    except (OSError, ValueError, DocsDatabaseError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    print(json.dumps(candidate.as_dict(), ensure_ascii=False, indent=2))
+    if candidate.status == "unchanged":
+        print("Corpus inchangé : aucune activation nécessaire.")
+        return
+    if candidate.candidate_path is None:
+        raise SystemExit("La reconstruction n'a produit aucune base candidate exploitable.")
+
+    try:
+        cases = load_benchmark(Path(args.benchmark))
+        _results, summary = run_retrieval_benchmark(
+            cases,
+            args.limit,
+            db_path=candidate.candidate_path,
+        )
+        failures = retrieval_threshold_failures(
+            summary,
+            min_recall=args.min_recall,
+            min_mrr=args.min_mrr,
+            min_group_coverage=args.min_group_coverage,
+        )
+    except (OSError, BenchmarkError, DocsDatabaseError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    print(
+        f"Candidate retrieval: Recall@{args.limit}={summary['recall_at_k']:.3f}, "
+        f"MRR={summary['mrr']:.3f}, couverture={summary['group_coverage']:.3f}, "
+        f"p95={summary['latency_p95_ms']:.1f}ms"
+    )
+    if failures:
+        raise SystemExit(
+            "Candidate refusée par les seuils retrieval : "
+            + "; ".join(failures)
+            + f". Base conservée pour inspection : {candidate.candidate_path}"
+        )
+    if args.dry_run:
+        print(f"Dry-run validé. Candidate non activée : {candidate.candidate_path}")
+        return
+
+    try:
+        activation = activate_docs_database(
+            candidate.candidate_path,
+            keep_history=args.keep_history,
+        )
+    except DocsDatabaseError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps({"activation": activation}, ensure_ascii=False, indent=2))
+
+
+def cmd_update_docs_db(args) -> None:
+    asyncio.run(_run_update_docs(args))
+
+
+def cmd_docs_history(_args) -> None:
+    history = list_docs_history()
+    if not history:
+        print("Aucune ancienne docs.db conservée.")
+        return
+    for path in history:
+        try:
+            stats = validate_docs_database(path, require_delete_journal=True)
+            print(
+                f"{path} — documents={stats['documents']} sections={stats['sections']} "
+                f"journal={stats['journal_mode']}"
+            )
+        except DocsDatabaseError as exc:
+            print(f"INVALIDE {path} — {exc}")
+
+
+def cmd_rollback_docs_db(args) -> None:
+    try:
+        result = rollback_docs_database(
+            Path(args.path).expanduser(),
+            keep_history=args.keep_history,
+        )
+    except DocsDatabaseError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps({"rollback": result}, ensure_ascii=False, indent=2))
+
+
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value * 100:.1f}%"
+
+
+async def _run_eval_answer(args) -> None:
+    path = Path(args.path)
+    try:
+        cases = load_benchmark(path)
+    except (OSError, BenchmarkError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if args.category:
+        selected_categories = set(args.category)
+        cases = [case for case in cases if case.category in selected_categories]
+    if args.max_cases is not None:
+        if args.max_cases < 1:
+            raise SystemExit("--max-cases doit être supérieur ou égal à 1.")
+        cases = cases[: args.max_cases]
+    if not cases:
+        raise SystemExit("Aucun cas du benchmark ne correspond aux filtres demandés.")
+
+    results = []
+    for case in cases:
+        answer = await generate_answer_for_case(case, limit=args.limit)
+        result = score_answer_case(case, answer)
+        results.append(result)
+        facts = f"faits={result.matched_facts}/{result.expected_facts}" if result.expected_facts else "faits=n/a"
+        menus = (
+            f"menus={result.matched_menu_paths}/{result.expected_menu_paths}"
+            if result.expected_menu_paths
+            else "menus=n/a"
+        )
+        citations = f"citations={result.relevant_citations}/{result.total_citations}"
+        print(
+            f"{'OK' if result.abstention_correct else 'KO'} [{case.category}] {case.case_id} "
+            f"abstention={'ok' if result.abstention_correct else 'ko'} {facts} {menus} {citations} "
+            f"{answer.total_latency_ms:.0f}ms — {case.question}"
+        )
+
+    summary = summarize_answers(results)
+    print(f"Abstention correcte: {_pct(summary['abstention_accuracy'])}")
+    print(
+        f"Faits obligatoires: {_pct(summary['fact_coverage'])} "
+        f"({summary['fact_matches']}/{summary['fact_total']})"
+    )
+    print(
+        f"Chemins de menus: {_pct(summary['menu_path_coverage'])} "
+        f"({summary['menu_matches']}/{summary['menu_total']})"
+    )
+    print(f"Présence des citations: {_pct(summary['citation_presence_accuracy'])}")
+    print(
+        f"Pertinence des citations: {_pct(summary['citation_relevance'])} "
+        f"({summary['relevant_citations']}/{summary['citations']})"
+    )
+    print(
+        f"Latence réponse complète: moyenne {summary['latency_mean_ms']:.0f}ms, "
+        f"p95 {summary['latency_p95_ms']:.0f}ms"
+    )
+    print("Hallucinations: non mesurées automatiquement par cette commande.")
+
+
+def cmd_eval_answer(args) -> None:
+    if settings.provider != "codex":
+        raise SystemExit(
+            "eval-answer exige ETPOS_PROVIDER=codex afin de mesurer la réponse du provider de production."
+        )
     init_all()
-    path = args.path
-    total = 0
-    hits = 0
-    reciprocal_rank_sum = 0.0
-    for raw in open(path, encoding="utf-8"):
-        raw = raw.strip()
-        if not raw:
-            continue
-        item = json.loads(raw)
-        if not item.get("answerable", True):
-            continue
-        keywords = [str(k).lower() for k in item.get("expected_section_keywords", [])]
-        if not keywords:
-            continue
-        total += 1
-        rows = search_sections(item["question"], limit=args.limit)
-        rank = _first_relevant_rank(rows, keywords)
-        hit = rank is not None
-        hits += int(hit)
-        reciprocal_rank_sum += (1.0 / rank) if rank else 0.0
-        detail = f" rang={rank}" if rank else ""
-        print(("OK " if hit else "KO ") + item["question"] + detail)
-    recall = (hits / total * 100.0) if total else 0.0
-    mrr = (reciprocal_rank_sum / total) if total else 0.0
-    print(f"Recall attendu @ {args.limit}: {hits}/{total} ({recall:.1f}%)")
-    print(f"MRR @ {args.limit}: {mrr:.3f}")
+    asyncio.run(_run_eval_answer(args))
 
 
 def cmd_codex_status(_args) -> None:
@@ -157,6 +391,24 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init-db", help="Initialiser app.db et docs.db")
     p.set_defaults(func=cmd_init_db)
 
+    p = sub.add_parser("backup-app-db", help="Sauvegarder app.db avec l'API SQLite backup")
+    p.add_argument("--retention-days", type=int)
+    p.set_defaults(func=cmd_backup_app_db)
+
+    p = sub.add_parser("verify-app-backup", help="Vérifier l'intégrité et le schéma d'une sauvegarde app.db")
+    p.add_argument("path")
+    p.set_defaults(func=cmd_verify_app_backup)
+
+    p = sub.add_parser("restore-app-db", help="Restaurer une sauvegarde app.db vers une base cible")
+    p.add_argument("path", help="Fichier de sauvegarde à restaurer")
+    p.add_argument("--target", help="Cible explicite pour tester une restauration sans remplacer app.db")
+    p.add_argument(
+        "--confirm-service-stopped",
+        action="store_true",
+        help="Requis pour remplacer app.db ; confirme que le service applicatif est arrêté",
+    )
+    p.set_defaults(func=cmd_restore_app_db)
+
     p = sub.add_parser("create-user", help="Créer un utilisateur local")
     p.add_argument("--username")
     p.set_defaults(func=cmd_create_user)
@@ -176,10 +428,51 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("codex-status", help="Verifier Codex CLI et son authentification ChatGPT")
     p.set_defaults(func=cmd_codex_status)
 
-    p = sub.add_parser("eval-retrieval", help="Mesurer le retrieval sur un fichier JSONL")
-    p.add_argument("--path", default="eval/questions.example.jsonl")
+    p = sub.add_parser("eval-retrieval", help="Mesurer le retrieval sur un benchmark JSONL")
+    p.add_argument("--path", default="eval/benchmark.jsonl")
+    p.add_argument("--docs-db", help="Base documentaire explicite à évaluer sans l'activer")
     p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--min-recall", type=float, help="Seuil Recall@K minimal entre 0 et 1")
+    p.add_argument("--min-mrr", type=float, help="Seuil MRR@K minimal entre 0 et 1")
+    p.add_argument(
+        "--min-group-coverage",
+        type=float,
+        help="Seuil minimal de couverture des groupes attendus entre 0 et 1",
+    )
     p.set_defaults(func=cmd_eval_retrieval)
+
+    p = sub.add_parser(
+        "update-docs-db",
+        help="Détecter, reconstruire, tester puis activer atomiquement docs.db",
+    )
+    p.add_argument("--registry", default="config/sources.json")
+    p.add_argument("--benchmark", default="eval/benchmark.jsonl")
+    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--min-recall", type=float, default=0.95)
+    p.add_argument("--min-mrr", type=float, default=0.80)
+    p.add_argument("--min-group-coverage", type=float, default=0.95)
+    p.add_argument("--keep-history", type=int, default=settings.docs_history_keep)
+    p.add_argument("--dry-run", action="store_true", help="Construire et tester sans activer")
+    p.set_defaults(func=cmd_update_docs_db)
+
+    p = sub.add_parser("docs-history", help="Lister les anciennes bases documentaires conservées")
+    p.set_defaults(func=cmd_docs_history)
+
+    p = sub.add_parser("rollback-docs-db", help="Réactiver atomiquement une docs.db archivée")
+    p.add_argument("path", help="Chemin d'une base présente dans data/docs-history")
+    p.add_argument("--keep-history", type=int, default=settings.docs_history_keep)
+    p.set_defaults(func=cmd_rollback_docs_db)
+
+    p = sub.add_parser("eval-answer", help="Mesurer les réponses finales avec le provider Codex")
+    p.add_argument("--path", default="eval/benchmark.jsonl")
+    p.add_argument("--limit", type=int, default=6, help="Nombre de passages injectés dans la réponse")
+    p.add_argument(
+        "--category",
+        action="append",
+        help="Limiter à une catégorie du benchmark ; option répétable",
+    )
+    p.add_argument("--max-cases", type=int, help="Limiter le nombre de cas exécutés")
+    p.set_defaults(func=cmd_eval_answer)
     return parser
 
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=ETPOS Assistant app.db backup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=etpos-assistant
+Group=etpos-assistant
+WorkingDirectory=/opt/etpos-assistant
+EnvironmentFile=/etc/etpos-assistant.env
+StateDirectory=etpos-assistant
+UMask=0077
+ExecStart=/opt/etpos-assistant/.venv/bin/etpos-assistant backup-app-db
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/etpos-assistant/data /var/lib/etpos-assistant

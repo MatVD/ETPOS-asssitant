@@ -1,0 +1,21 @@
+[Unit]
+Description=ETPOS Assistant atomic documentation update
+After=network-online.target etpos-assistant.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=etpos-assistant
+Group=etpos-assistant
+WorkingDirectory=/opt/etpos-assistant
+EnvironmentFile=/etc/etpos-assistant.env
+StateDirectory=etpos-assistant
+UMask=0077
+ExecStart=/opt/etpos-assistant/.venv/bin/etpos-assistant update-docs-db
+TimeoutStartSec=10min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/etpos-assistant/data /opt/etpos-assistant/snapshots

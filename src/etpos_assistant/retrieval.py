@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from .db import docs_db
 from .vocabulary import QueryAnalysis, RetrievalConcept, analyze_query, normalize_domain_text
@@ -42,6 +43,7 @@ class RetrievedSection:
     document_name: str
     document_version: str | None
     revision_date: str | None
+    document_hash: str
     score: float
 
 
@@ -165,6 +167,7 @@ def _row_to_section(row) -> RetrievedSection:
         document_name=row["document_name"],
         document_version=row["detected_version"],
         revision_date=row["detected_revision_date"],
+        document_hash=row["content_hash"],
         score=float(row["score"]),
     )
 
@@ -177,7 +180,7 @@ def _query_sections(
 ) -> list[RetrievedSection]:
     sql = f"""
         SELECT s.id, s.title, s.heading_path, s.source_url, s.source_text,
-               d.name AS document_name, d.detected_version, d.detected_revision_date,
+               d.name AS document_name, d.detected_version, d.detected_revision_date, d.content_hash,
                bm25(
                    sections_fts,
                    {float(tuning.title_weight)},
@@ -239,6 +242,7 @@ def search_sections_with_trace(
     question: str,
     limit: int = 6,
     tuning: RetrievalTuning = DEFAULT_TUNING,
+    db_path: Path | None = None,
 ) -> tuple[list[RetrievedSection], RetrievalTrace]:
     analysis = analyze_query(question)
     plan = _build_search_plan(question, analysis, tuning)
@@ -246,7 +250,7 @@ def search_sections_with_trace(
         return [], RetrievalTrace(analysis=analysis, variants=(), candidates=())
 
     variant_traces: list[VariantTrace] = []
-    with docs_db() as conn:
+    with docs_db(db_path) as conn:
         if len(plan) == 1:
             rows = _query_sections(conn, plan[0].query, limit, tuning)
             variant_traces.append(_variant_trace(plan[0], rows))
@@ -325,6 +329,12 @@ def search_sections(
     question: str,
     limit: int = 6,
     tuning: RetrievalTuning = DEFAULT_TUNING,
+    db_path: Path | None = None,
 ) -> list[RetrievedSection]:
-    rows, _ = search_sections_with_trace(question, limit=limit, tuning=tuning)
+    rows, _ = search_sections_with_trace(
+        question,
+        limit=limit,
+        tuning=tuning,
+        db_path=db_path,
+    )
     return rows

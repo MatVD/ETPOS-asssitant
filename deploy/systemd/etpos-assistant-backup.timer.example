@@ -1,0 +1,11 @@
+[Unit]
+Description=ETPOS Assistant periodic app.db backup
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:15:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+Unit=etpos-assistant-backup.service
+
+[Install]
+WantedBy=timers.target

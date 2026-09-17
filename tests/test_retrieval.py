@@ -251,6 +251,30 @@ def test_current_account_meanings_are_disambiguated():
     assert [concept.key for concept in generic.concepts] == ["COMPTE_COURANT"]
 
 
+def test_benchmark_synonyms_expand_to_documented_etpos_terms():
+    article_plan = build_search_plan("Où gère-t-on les articles ?")
+    payment_plan = build_search_plan("Comment encaisser avec deux moyens de paiement différents ?")
+    weighing_plan = build_search_plan("Comment passer la caisse en mode pesée ?")
+
+    assert any(item.label.startswith("ARTICLE:") for item in article_plan)
+    assert any(item.label.startswith("REGLEMENT_MIXTE:") for item in payment_plan)
+    assert any(item.label.startswith("MODE_BALANCE:") for item in weighing_plan)
+
+
+def test_ambiguous_client_account_keeps_both_plausible_business_meanings():
+    analysis = analyze_query("Je veux ouvrir un compte pour un client, comment faire ?")
+    keys = [concept.key for concept in analysis.concepts]
+    assert "COMPTE_COURANT_CLIENT" in keys
+    assert "COMPTE_VENTE" in keys
+
+
+def test_generic_new_card_expands_multiple_etpos_card_meanings():
+    plan = build_search_plan("Comment ajouter une nouvelle carte ?")
+    card_queries = [item.query for item in plan if item.label.startswith("CARTE_GENERIQUE:")]
+    assert any("rfid" in query for query in card_queries)
+    assert any("consommation" in query for query in card_queries)
+
+
 def test_retrieval_tuning_is_explicit_and_overrideable():
     tuning = RetrievalTuning(title_weight=3.0, heading_path_weight=2.0, body_weight=1.0)
     assert tuning.title_weight == 3.0

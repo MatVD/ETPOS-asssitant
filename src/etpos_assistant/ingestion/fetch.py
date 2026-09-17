@@ -18,7 +18,7 @@ def validate_source_url(url: str) -> None:
         raise ValueError(f"Source non autorisée : {url}")
 
 
-async def fetch_html(source_key: str, url: str) -> tuple[str, str, str]:
+async def download_html(url: str) -> tuple[str, str]:
     validate_source_url(url)
     headers = {"User-Agent": "ETPOS-Assistant/0.1 (+document-ingestion)"}
     async with httpx.AsyncClient(timeout=45.0, follow_redirects=True, headers=headers) as client:
@@ -29,8 +29,17 @@ async def fetch_html(source_key: str, url: str) -> tuple[str, str, str]:
             raise ValueError(f"Type de contenu inattendu pour {url}: {content_type}")
         html = response.text
     digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
+    return html, digest
+
+
+def save_snapshot(source_key: str, html: str, digest: str) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     settings.snapshot_dir.mkdir(parents=True, exist_ok=True)
     path = settings.snapshot_dir / f"{source_key}-{stamp}-{digest[:12]}.html"
     path.write_text(html, encoding="utf-8")
-    return html, digest, str(path)
+    return str(path)
+
+
+async def fetch_html(source_key: str, url: str) -> tuple[str, str, str]:
+    html, digest = await download_html(url)
+    return html, digest, save_snapshot(source_key, html, digest)

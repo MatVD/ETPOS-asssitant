@@ -59,8 +59,12 @@ git checkout --detach "$TARGET_SHA"
 CHECKED_OUT=1
 
 .venv/bin/python -m pip install --disable-pip-version-check -e .
-sudo -n -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/etpos-assistant" init-db
-sudo -n -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/etpos-assistant" eval-retrieval --path "$APP_DIR/eval/questions.example.jsonl" --limit 5
+sudo -n -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/etpos-assistant" eval-retrieval \
+    --path "$APP_DIR/eval/benchmark.jsonl" \
+    --limit 5 \
+    --min-recall 0.95 \
+    --min-mrr 0.80 \
+    --min-group-coverage 0.95
 
 sudo -n systemctl restart "$SERVICE_NAME"
 sudo -n systemctl is-active --quiet "$SERVICE_NAME"
