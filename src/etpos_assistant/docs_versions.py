@@ -4,5 +4,5 @@ from __future__ import annotations
 # parser/normalization change can alter the sections produced from identical
 # source HTML. Increment INDEX_VERSION when the persisted docs.db index format
 # or tokenization changes and therefore requires a full rebuild.
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 INDEX_VERSION = 1

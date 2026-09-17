@@ -33,7 +33,7 @@ def _codex_command() -> list[str]:
     return command
 
 
-def _codex_environment() -> dict[str, str]:
+def codex_environment() -> dict[str, str]:
     """Expose only what the Codex process needs, not the application environment."""
     allowed = {
         "PATH",
@@ -60,6 +60,17 @@ def _codex_environment() -> dict[str, str]:
     if settings.codex_home:
         env["CODEX_HOME"] = str(settings.codex_home)
     return env
+
+
+def codex_auth_directory(env: dict[str, str] | None = None) -> Path | None:
+    effective_env = codex_environment() if env is None else env
+    explicit = effective_env.get("CODEX_HOME")
+    if explicit:
+        return Path(explicit).expanduser()
+    home = effective_env.get("HOME")
+    if home:
+        return Path(home).expanduser() / ".codex"
+    return None
 
 
 def parse_agent_message(raw_line: str) -> str | None:
@@ -98,7 +109,7 @@ class CodexCliProvider:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=workdir,
-                env=_codex_environment(),
+                env=codex_environment(),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

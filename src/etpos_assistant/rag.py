@@ -12,6 +12,7 @@ from .markdown import render_safe_markdown
 from .providers import CodexCliProvider, MockProvider, SourceContext
 from .providers.prompting import ABSTENTION_TEXT
 from .retrieval import RetrievedSection, search_sections
+from .vocabulary import analyze_query, normalize_domain_text
 
 CITATION_RE = re.compile(r"\[S(\d+)\]")
 ABSTENTION = ABSTENTION_TEXT
@@ -30,6 +31,50 @@ def _history(conversation_id: int) -> list[dict[str, str]]:
             (conversation_id,),
         ).fetchall()
     return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+
+
+def _history_for_prompt(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    sanitized: list[dict[str, str]] = []
+    for item in history:
+        content = item["content"]
+        if item["role"] == "assistant":
+            content = CITATION_RE.sub("", content)
+        sanitized.append({"role": item["role"], "content": content})
+    return sanitized
+
+
+def _retrieval_question(question: str, history: list[dict[str, str]]) -> str:
+    analysis = analyze_query(question)
+    if analysis.concepts:
+        return question
+
+    normalized = normalize_domain_text(question)
+    content_tokens = [token for token in normalized.split() if len(token) >= 3]
+    follow_up_markers = {
+        "ca",
+        "cela",
+        "celui",
+        "celle",
+        "ceux",
+        "elles",
+        "eux",
+        "leur",
+        "leurs",
+        "lui",
+        "supprimer",
+        "modifier",
+        "changer",
+        "ajouter",
+        "creer",
+    }
+    looks_contextual = len(content_tokens) <= 6 or bool(set(content_tokens) & follow_up_markers)
+    if not looks_contextual:
+        return question
+
+    for item in reversed(history):
+        if item["role"] == "user" and item["content"].strip():
+            return f"{item['content'].strip()} {question.strip()}"
+    return question
 
 
 def _citations(answer: str, sections: list[RetrievedSection]) -> list[dict]:
@@ -74,7 +119,8 @@ def finalize_answer(raw_answer: str, sections: list[RetrievedSection]) -> tuple[
 
 
 async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict]:
-    sections = search_sections(question, limit=6)
+    history = _history(conversation_id)
+    sections = search_sections(_retrieval_question(question, history), limit=6)
     if not sections:
         yield {"type": "delta", "text": ABSTENTION}
         yield {
@@ -99,7 +145,7 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
     async for chunk in provider.stream_answer(
         question=question,
         sources=contexts,
-        history=_history(conversation_id),
+        history=_history_for_prompt(history),
     ):
         chunks.append(chunk)
         if sum(len(part) for part in chunks) > 40000:

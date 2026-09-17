@@ -8,7 +8,13 @@ from pathlib import Path
 def _load_local_env(path: Path = Path(".env")) -> None:
     if not path.exists():
         return
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    try:
+        content = path.read_text(encoding="utf-8")
+    except PermissionError:
+        # `.env` is only a local convenience. Runtime environments may provide
+        # configuration externally while deliberately denying access to it.
+        return
+    for raw in content.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

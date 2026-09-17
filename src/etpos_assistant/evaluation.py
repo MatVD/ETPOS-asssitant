@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import re
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +30,9 @@ class BenchmarkCase:
     relevant_section_groups: tuple[tuple[str, ...], ...]
     expected_heading_paths: tuple[str, ...] = ()
     expected_menu_paths: tuple[str, ...] = ()
+    expected_menu_path_groups: tuple[tuple[str, ...], ...] = ()
     required_facts: tuple[str, ...] = ()
+    required_fact_groups: tuple[tuple[str, ...], ...] = ()
     notes: str = ""
 
 
@@ -78,6 +82,8 @@ class AnswerCaseResult:
     expected_menu_paths: int
     relevant_citations: int
     total_citations: int
+    matched_citation_groups: int
+    expected_citation_groups: int
     citation_presence_correct: bool
 
     @property
@@ -98,6 +104,12 @@ class AnswerCaseResult:
             return None
         return self.relevant_citations / self.total_citations
 
+    @property
+    def citation_expected_coverage(self) -> float | None:
+        if not self.expected_citation_groups:
+            return None
+        return self.matched_citation_groups / self.expected_citation_groups
+
 
 def _strings(value: object, field: str, case_id: str) -> tuple[str, ...]:
     if value is None:
@@ -107,21 +119,25 @@ def _strings(value: object, field: str, case_id: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value)
 
 
-def _groups(value: object, case_id: str) -> tuple[tuple[str, ...], ...]:
+def _string_groups(value: object, field: str, case_id: str) -> tuple[tuple[str, ...], ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
-        raise BenchmarkError(f"{case_id}: relevant_section_groups doit être une liste")
+        raise BenchmarkError(f"{case_id}: {field} doit être une liste")
     groups: list[tuple[str, ...]] = []
     for index, group in enumerate(value, start=1):
         if not isinstance(group, list) or not group or not all(
             isinstance(item, str) and item.strip() for item in group
         ):
             raise BenchmarkError(
-                f"{case_id}: relevant_section_groups[{index}] doit être une liste non vide de chaînes"
+                f"{case_id}: {field}[{index}] doit être une liste non vide de chaînes"
             )
         groups.append(tuple(item.strip() for item in group))
     return tuple(groups)
+
+
+def _groups(value: object, case_id: str) -> tuple[tuple[str, ...], ...]:
+    return _string_groups(value, "relevant_section_groups", case_id)
 
 
 def _case_from_dict(item: dict, line_number: int) -> BenchmarkCase:
@@ -151,6 +167,24 @@ def _case_from_dict(item: dict, line_number: int) -> BenchmarkCase:
     if answerability == "none" and groups:
         raise BenchmarkError(f"{case_id}: une question non répondable ne doit pas déclarer de section attendue")
 
+    expected_menu_paths = _strings(item.get("expected_menu_paths"), "expected_menu_paths", case_id)
+    expected_menu_path_groups = _string_groups(
+        item.get("expected_menu_path_groups"), "expected_menu_path_groups", case_id
+    )
+    if expected_menu_paths and expected_menu_path_groups:
+        raise BenchmarkError(
+            f"{case_id}: utiliser expected_menu_paths ou expected_menu_path_groups, pas les deux"
+        )
+
+    required_facts = _strings(item.get("required_facts"), "required_facts", case_id)
+    required_fact_groups = _string_groups(
+        item.get("required_fact_groups"), "required_fact_groups", case_id
+    )
+    if required_facts and required_fact_groups:
+        raise BenchmarkError(
+            f"{case_id}: utiliser required_facts ou required_fact_groups, pas les deux"
+        )
+
     return BenchmarkCase(
         case_id=case_id,
         category=category,
@@ -160,8 +194,10 @@ def _case_from_dict(item: dict, line_number: int) -> BenchmarkCase:
         expected_heading_paths=_strings(
             item.get("expected_heading_paths"), "expected_heading_paths", case_id
         ),
-        expected_menu_paths=_strings(item.get("expected_menu_paths"), "expected_menu_paths", case_id),
-        required_facts=_strings(item.get("required_facts"), "required_facts", case_id),
+        expected_menu_paths=expected_menu_paths,
+        expected_menu_path_groups=expected_menu_path_groups,
+        required_facts=required_facts,
+        required_fact_groups=required_fact_groups,
         notes=str(item.get("notes") or "").strip(),
     )
 
@@ -393,6 +429,31 @@ def _contains_expected(text: str, expected: str) -> bool:
     return normalize_domain_text(expected) in normalize_domain_text(text)
 
 
+def _effective_groups(
+    legacy_values: tuple[str, ...],
+    alternative_groups: tuple[tuple[str, ...], ...],
+) -> tuple[tuple[str, ...], ...]:
+    if alternative_groups:
+        return alternative_groups
+    return tuple((value,) for value in legacy_values)
+
+
+def _contains_menu_path(text: str, expected: str) -> bool:
+    haystack = normalize_domain_text(text)
+    raw_segments = re.split(r"\s*(?:>|→|\+)\s*", expected)
+    segments = [normalize_domain_text(segment) for segment in raw_segments if normalize_domain_text(segment)]
+    if len(segments) <= 1:
+        return _contains_expected(text, expected)
+
+    cursor = 0
+    for segment in segments:
+        position = haystack.find(segment, cursor)
+        if position < 0:
+            return False
+        cursor = position + len(segment)
+    return True
+
+
 def _is_abstention(text: str) -> bool:
     return normalize_domain_text(text) == normalize_domain_text(ABSTENTION)
 
@@ -401,9 +462,15 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
     is_abstention = _is_abstention(answer.text)
     abstention_correct = is_abstention if case.answerability == "none" else not is_abstention
 
-    matched_facts = sum(_contains_expected(answer.text, fact) for fact in case.required_facts)
+    fact_groups = _effective_groups(case.required_facts, case.required_fact_groups)
+    menu_path_groups = _effective_groups(case.expected_menu_paths, case.expected_menu_path_groups)
+    matched_facts = sum(
+        any(_contains_expected(answer.text, alternative) for alternative in alternatives)
+        for alternatives in fact_groups
+    )
     matched_menu_paths = sum(
-        _contains_expected(answer.text, menu_path) for menu_path in case.expected_menu_paths
+        any(_contains_menu_path(answer.text, alternative) for alternative in alternatives)
+        for alternatives in menu_path_groups
     )
 
     relevant_section_ids = {
@@ -418,6 +485,10 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
     }
     relevant_citations = len(cited_section_ids & relevant_section_ids)
     total_citations = len(cited_section_ids)
+    matched_citation_groups = sum(
+        any(section.id in cited_section_ids and _matches_group(section, group) for section in answer.sections)
+        for group in case.relevant_section_groups
+    )
     citation_presence_correct = (
         total_citations == 0 if case.answerability == "none" else total_citations > 0
     )
@@ -427,13 +498,53 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
         answer=answer,
         abstention_correct=abstention_correct,
         matched_facts=matched_facts,
-        expected_facts=len(case.required_facts),
+        expected_facts=len(fact_groups),
         matched_menu_paths=matched_menu_paths,
-        expected_menu_paths=len(case.expected_menu_paths),
+        expected_menu_paths=len(menu_path_groups),
         relevant_citations=relevant_citations,
         total_citations=total_citations,
+        matched_citation_groups=matched_citation_groups,
+        expected_citation_groups=len(case.relevant_section_groups),
         citation_presence_correct=citation_presence_correct,
     )
+
+
+def answer_result_to_dict(result: AnswerCaseResult) -> dict:
+    return {
+        "id": result.case.case_id,
+        "category": result.case.category,
+        "question": result.case.question,
+        "answerability": result.case.answerability,
+        "answer": result.answer.text,
+        "abstention_correct": result.abstention_correct,
+        "matched_facts": result.matched_facts,
+        "expected_facts": result.expected_facts,
+        "matched_menu_paths": result.matched_menu_paths,
+        "expected_menu_paths": result.expected_menu_paths,
+        "relevant_citations": result.relevant_citations,
+        "total_citations": result.total_citations,
+        "matched_citation_groups": result.matched_citation_groups,
+        "expected_citation_groups": result.expected_citation_groups,
+        "citation_presence_correct": result.citation_presence_correct,
+        "retrieval_latency_ms": result.answer.retrieval_latency_ms,
+        "generation_latency_ms": result.answer.generation_latency_ms,
+        "total_latency_ms": result.answer.total_latency_ms,
+        "citations": list(result.answer.citations),
+        "retrieved_sections": [
+            {
+                "section_id": section.id,
+                "title": section.title,
+                "heading_path": section.heading_path,
+                "source_url": section.source_url,
+                "document_name": section.document_name,
+                "document_version": section.document_version,
+                "revision_date": section.revision_date,
+                "document_hash": section.document_hash,
+                "score": section.score,
+            }
+            for section in result.answer.sections
+        ],
+    }
 
 
 def summarize_answers(results: list[AnswerCaseResult]) -> dict:
@@ -443,6 +554,8 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
     menu_matches = sum(result.matched_menu_paths for result in results)
     cited_total = sum(result.total_citations for result in results)
     relevant_citations = sum(result.relevant_citations for result in results)
+    citation_group_total = sum(result.expected_citation_groups for result in results)
+    citation_group_matches = sum(result.matched_citation_groups for result in results)
     latencies = [result.answer.total_latency_ms for result in results]
 
     return {
@@ -464,8 +577,108 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
             else 0.0
         ),
         "citation_relevance": relevant_citations / cited_total if cited_total else None,
+        "citation_expected_coverage": (
+            citation_group_matches / citation_group_total if citation_group_total else None
+        ),
+        "matched_citation_groups": citation_group_matches,
+        "expected_citation_groups": citation_group_total,
         "relevant_citations": relevant_citations,
         "citations": cited_total,
         "latency_mean_ms": sum(latencies) / len(latencies) if latencies else 0.0,
         "latency_p95_ms": _percentile(latencies, 0.95),
     }
+
+
+def _section_from_report_payload(
+    conn: sqlite3.Connection,
+    payload: dict,
+) -> RetrievedSection:
+    section_id = int(payload["section_id"])
+    document_hash = str(payload["document_hash"])
+    source_url = str(payload["source_url"])
+    heading_path = str(payload["heading_path"])
+    rows = conn.execute(
+        """
+        SELECT s.source_text
+        FROM sections s
+        JOIN documents d ON d.id = s.document_id
+        WHERE d.content_hash = ? AND s.source_url = ? AND s.heading_path = ?
+        LIMIT 2
+        """,
+        (document_hash, source_url, heading_path),
+    ).fetchall()
+    if len(rows) != 1:
+        raise BenchmarkError(
+            "Section introuvable ou ambiguë dans docs.db lors du re-scoring : "
+            f"hash={document_hash} url={source_url} path={heading_path}"
+        )
+    row = rows[0]
+    return RetrievedSection(
+        id=section_id,
+        title=str(payload["title"]),
+        heading_path=str(payload["heading_path"]),
+        source_url=str(payload["source_url"]),
+        source_text=str(row["source_text"]),
+        document_name=str(payload["document_name"]),
+        document_version=payload.get("document_version"),
+        revision_date=payload.get("revision_date"),
+        document_hash=str(payload["document_hash"]),
+        score=float(payload["score"]),
+    )
+
+
+def rescore_answer_report(
+    benchmark_path: Path,
+    report_path: Path,
+    docs_db_path: Path,
+) -> tuple[list[AnswerCaseResult], dict]:
+    cases = load_benchmark(benchmark_path)
+    by_question = {case.question: case for case in cases}
+    if len(by_question) != len(cases):
+        raise BenchmarkError("Le benchmark contient des questions dupliquées ; re-scoring ambigu.")
+
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BenchmarkError(f"Rapport illisible : {report_path}: {exc}") from exc
+    report_cases = report.get("cases")
+    if not isinstance(report_cases, list):
+        raise BenchmarkError(f"{report_path}: liste 'cases' absente du rapport")
+
+    results: list[AnswerCaseResult] = []
+    try:
+        with sqlite3.connect(docs_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            for payload in report_cases:
+                if not isinstance(payload, dict):
+                    raise BenchmarkError(f"{report_path}: cas de rapport invalide")
+                question = str(payload.get("question") or "").strip()
+                case = by_question.get(question)
+                if case is None:
+                    raise BenchmarkError(
+                        f"Question du rapport absente du benchmark courant : {question}"
+                    )
+                retrieved = payload.get("retrieved_sections", [])
+                if not isinstance(retrieved, list):
+                    raise BenchmarkError(f"{case.case_id}: retrieved_sections invalide")
+                sections = tuple(
+                    _section_from_report_payload(conn, section)
+                    for section in retrieved
+                    if isinstance(section, dict)
+                )
+                citations = payload.get("citations", [])
+                if not isinstance(citations, list):
+                    raise BenchmarkError(f"{case.case_id}: citations invalides")
+                answer = GeneratedAnswer(
+                    text=str(payload.get("answer") or ""),
+                    citations=tuple(citation for citation in citations if isinstance(citation, dict)),
+                    sections=sections,
+                    retrieval_latency_ms=float(payload.get("retrieval_latency_ms", 0.0)),
+                    generation_latency_ms=float(payload.get("generation_latency_ms", 0.0)),
+                    total_latency_ms=float(payload.get("total_latency_ms", 0.0)),
+                )
+                results.append(score_answer_case(case, answer))
+    except sqlite3.Error as exc:
+        raise BenchmarkError(f"Impossible de relire {docs_db_path}: {exc}") from exc
+
+    return results, summarize_answers(results)

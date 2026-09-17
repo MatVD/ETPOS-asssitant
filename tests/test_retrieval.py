@@ -4,7 +4,10 @@ from types import SimpleNamespace
 import etpos_assistant.db as db_module
 from etpos_assistant.db import docs_db, init_docs_db
 from etpos_assistant.retrieval import (
+    CandidateTrace,
     RetrievalTuning,
+    RetrievedSection,
+    _select_diverse_candidates,
     build_fts_query,
     build_search_plan,
     search_sections,
@@ -198,6 +201,36 @@ def test_user_concept_beats_unrelated_create_actions(monkeypatch, tmp_path):
     assert rows[0].heading_path.startswith("GESTION DES UTILISATEURS")
 
 
+def test_client_file_concept_targets_client_record_not_current_account(monkeypatch, tmp_path):
+    document_id = _create_document(monkeypatch, tmp_path)
+    _insert_section(
+        document_id,
+        order=1,
+        title="Gestion des Clients",
+        path="GESTION DES CLIENTS > Gestion des Clients",
+        text=(
+            "Pour gérer des clients, aller dans Fichiers + Fichier de clients. "
+            "Le fichier des clients stocke les informations sur les clients et les données de facturation."
+        ),
+    )
+    _insert_section(
+        document_id,
+        order=2,
+        title="Configurer les documents",
+        path="GESTION DES CLIENTS > Gérer les comptes courant des clients > Comptes courant > Configurer les documents",
+        text="Configurer les documents du compte courant client.",
+    )
+
+    analysis = analyze_query("Où modifier la fiche d'un client ?")
+    assert [concept.key for concept in analysis.concepts] == ["CLIENT_FICHIER"]
+
+    rows = search_sections("Où modifier la fiche d'un client ?", limit=2)
+    assert rows[0].title == "Gestion des Clients"
+
+    current_account = analyze_query("Comment gérer un compte courant client ?")
+    assert "CLIENT_FICHIER" not in [concept.key for concept in current_account.concepts]
+
+
 def test_query_analysis_separates_intent_object_and_concept():
     analysis = analyze_query("Comment ajouter un nouveau compte ?")
     assert analysis.intents == ("CREATE",)
@@ -251,6 +284,18 @@ def test_current_account_meanings_are_disambiguated():
     assert [concept.key for concept in generic.concepts] == ["COMPTE_COURANT"]
 
 
+def test_natural_domain_phrasing_expands_to_documented_concepts():
+    backup = build_search_plan("Je veux faire une copie de sécurité de ma caisse")
+    permissions = build_search_plan("Je dois limiter ce qu'un employé a le droit de faire")
+    split_payment = build_search_plan("Le client veut payer une partie en espèces et le reste par carte")
+    implicit_user = build_search_plan("Je crée la personne qui va se connecter et utiliser la caisse")
+
+    assert any(item.label.startswith("SAUVEGARDE:") for item in backup)
+    assert any(item.label.startswith("PERMISSIONS_UTILISATEUR:") for item in permissions)
+    assert any(item.label.startswith("REGLEMENT_MIXTE:") for item in split_payment)
+    assert any(item.label.startswith("UTILISATEUR:") for item in implicit_user)
+
+
 def test_benchmark_synonyms_expand_to_documented_etpos_terms():
     article_plan = build_search_plan("Où gère-t-on les articles ?")
     payment_plan = build_search_plan("Comment encaisser avec deux moyens de paiement différents ?")
@@ -273,6 +318,45 @@ def test_generic_new_card_expands_multiple_etpos_card_meanings():
     card_queries = [item.query for item in plan if item.label.startswith("CARTE_GENERIQUE:")]
     assert any("rfid" in query for query in card_queries)
     assert any("consommation" in query for query in card_queries)
+
+
+def test_lexical_anchor_is_kept_when_concept_reranking_would_crowd_it_out():
+    concepts = analyze_query("Comment créer un utilisateur ?").concepts
+    ranked = []
+    for index in range(1, 7):
+        section = RetrievedSection(
+            id=index,
+            title=f"Section {index}",
+            heading_path=f"Chemin {index}",
+            source_url=f"https://example.test/{index}",
+            source_text=f"Texte {index}",
+            document_name="ETPOS",
+            document_version="5.34",
+            revision_date="2026-01-30",
+            document_hash="hash",
+            score=-float(7 - index),
+        )
+        trace = CandidateTrace(
+            section_id=index,
+            title=section.title,
+            heading_path=section.heading_path,
+            rrf_score=0.1,
+            signal_score=0.0,
+            best_bm25_score=-float(7 - index),
+            final_score=0.1,
+            matched_variants=("UTILISATEUR:1",),
+        )
+        ranked.append((section, trace))
+
+    selected = _select_diverse_candidates(
+        ranked,
+        concepts,
+        limit=5,
+        tuning=RetrievalTuning(),
+        lexical_anchor_id=6,
+    )
+
+    assert [section.id for section in selected] == [1, 2, 3, 4, 6]
 
 
 def test_retrieval_tuning_is_explicit_and_overrideable():

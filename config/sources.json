@@ -1,4 +1,7 @@
 {
+  "validation_benchmarks": [
+    "eval/acceptance.jsonl"
+  ],
   "sources": [
     {
       "id": "etpos-user-manual-fr",
@@ -11,11 +14,18 @@
     {
       "id": "etpos-support-fr",
       "name": "Support ETPOS - Français",
-      "url": "https://www.etpos.pt/fr/suporte",
+      "url": "https://etpos.fr/fr/suporte",
       "type": "support",
       "priority": 60,
-      "enabled": false,
-      "note": "Désactivé par défaut tant que son parsing n'est pas validé par les tests de corpus."
+      "enabled": true,
+      "validation_profile": "support_faq_answers",
+      "validation_benchmarks": [
+        "eval/support.jsonl"
+      ],
+      "min_faq_questions": 5,
+      "min_answered_faqs": 3,
+      "min_faq_answer_chars": 30,
+      "note": "Activé après validation réelle de l'extraction statique, benchmarks retrieval et revue Codex sur candidate. Les réponses FAQ sont extraites du bundle client officiel sans exécuter JavaScript ; eval/support.jsonl reste un contrat de source bloquant pour les futures candidates."
     }
   ]
 }

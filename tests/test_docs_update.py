@@ -331,10 +331,15 @@ async def test_dev_ingest_reindexes_when_build_version_changes(tmp_path, monkeyp
         conn.execute("UPDATE build_metadata SET parser_version = ? WHERE id = 1", (PARSER_VERSION - 1,))
         conn.commit()
 
-    async def same_fetch(_source_id: str, _url: str):
-        return html, digest, str(snapshot)
+    async def same_download(_url: str):
+        return html, digest
 
-    monkeypatch.setattr(ingestion_service, "fetch_html", same_fetch)
+    monkeypatch.setattr(ingestion_service, "download_html", same_download)
+    monkeypatch.setattr(
+        ingestion_service,
+        "save_snapshot",
+        lambda _source_id, _text, _digest, suffix=".html": str(snapshot),
+    )
     monkeypatch.setattr(ingestion_service, "load_registry", lambda: [SOURCE])
 
     results = await ingestion_service.ingest_enabled_sources(db_path=database)

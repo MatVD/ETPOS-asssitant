@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,8 +10,10 @@ import etpos_assistant.evaluation as evaluation
 from etpos_assistant.evaluation import (
     BenchmarkError,
     GeneratedAnswer,
+    answer_result_to_dict,
     evaluate_retrieval_case,
     load_benchmark,
+    rescore_answer_report,
     score_answer_case,
     summarize_answers,
     summarize_retrieval,
@@ -87,9 +90,9 @@ def test_project_benchmark_covers_required_categories():
         "partial",
         "unanswerable",
     }
-    assert sum(case.answerability == "none" for case in cases) >= 5
-    assert any(case.expected_menu_paths for case in cases)
-    assert any(case.required_facts for case in cases)
+    assert sum(case.answerability == "none" for case in cases) >= 3
+    assert any(case.expected_menu_paths or case.expected_menu_path_groups for case in cases)
+    assert any(case.required_facts or case.required_fact_groups for case in cases)
 
 
 def test_load_benchmark_rejects_answerable_case_without_expected_section(tmp_path):
@@ -194,6 +197,7 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
     assert answer_result.menu_path_coverage == 1.0
     assert answer_result.citation_presence_correct
     assert answer_result.citation_relevance == 1.0
+    assert answer_result.citation_expected_coverage == 1.0
 
     unanswerable = evaluation.BenchmarkCase(
         case_id="none",
@@ -220,7 +224,115 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
     assert summary["menu_path_coverage"] == 1.0
     assert summary["citation_presence_accuracy"] == 1.0
     assert summary["citation_relevance"] == 1.0
+    assert summary["citation_expected_coverage"] == 1.0
     assert summary["latency_p95_ms"] == 30.0
+
+
+def test_answer_scoring_accepts_fact_alternatives_and_ordered_menu_segments():
+    relevant = _section(30, "Sauvegarde", "SÉCURITÉ ET FIABILITÉ > Sauvegarde")
+    case = evaluation.BenchmarkCase(
+        case_id="backup-natural",
+        category="simple",
+        question="Comment sauvegarder ?",
+        answerability="full",
+        relevant_section_groups=(("sauvegarde",),),
+        expected_menu_path_groups=(("Système > Sauvegarde > Exporter",),),
+        required_fact_groups=(
+            ("définir les options souhaitées", "options souhaitées"),
+            ("valider", "validez", "validation"),
+        ),
+    )
+    generated = GeneratedAnswer(
+        text=(
+            "Allez dans Système > Sauvegarde, puis ouvrez l'onglet Exporter. "
+            "Définissez les options souhaitées et validez. [S1]"
+        ),
+        citations=({"source_id": "S1", "section_id": 30},),
+        sections=(relevant,),
+        retrieval_latency_ms=1.0,
+        generation_latency_ms=2.0,
+        total_latency_ms=3.0,
+    )
+
+    result = score_answer_case(case, generated)
+
+    assert result.fact_coverage == 1.0
+    assert result.menu_path_coverage == 1.0
+
+
+def test_load_benchmark_rejects_legacy_and_grouped_expectations_together(tmp_path):
+    path = tmp_path / "invalid.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "id": "bad-groups",
+                "question": "Question",
+                "answerability": "full",
+                "relevant_section_groups": [["sauvegarde"]],
+                "required_facts": ["valider"],
+                "required_fact_groups": [["valider", "validation"]],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BenchmarkError, match="required_facts ou required_fact_groups"):
+        load_benchmark(path)
+
+
+def test_acceptance_benchmark_is_separate_and_covers_risk_categories():
+    path = Path(__file__).resolve().parents[1] / "eval" / "acceptance.jsonl"
+    cases = load_benchmark(path)
+
+    assert len(cases) >= 12
+    assert {case.category for case in cases} >= {
+        "simple",
+        "procedure",
+        "menu_path",
+        "synonym",
+        "ambiguous",
+        "partial",
+        "unanswerable",
+    }
+    assert sum(case.answerability == "none" for case in cases) >= 2
+
+
+def test_support_benchmark_covers_each_official_faq_section():
+    path = Path(__file__).resolve().parents[1] / "eval" / "support.jsonl"
+    cases = load_benchmark(path)
+
+    assert len(cases) == 10
+    assert {case.category for case in cases} == {"source_contract"}
+    assert all(case.answerability == "full" for case in cases)
+    assert all(case.relevant_section_groups for case in cases)
+    assert all(case.required_fact_groups for case in cases)
+
+
+def test_answer_result_to_dict_keeps_review_evidence():
+    relevant = _section(10, "Types de Règlement", "CONFIGURER ETPOS > Types de Règlement")
+    case = evaluation.BenchmarkCase(
+        case_id="payment-types",
+        category="menu_path",
+        question="Où configurer les types de règlement ?",
+        answerability="full",
+        relevant_section_groups=(("types de règlement",),),
+    )
+    generated = GeneratedAnswer(
+        text="Réponse [S1]",
+        citations=({"source_id": "S1", "section_id": 10},),
+        sections=(relevant,),
+        retrieval_latency_ms=5.0,
+        generation_latency_ms=25.0,
+        total_latency_ms=30.0,
+    )
+
+    payload = answer_result_to_dict(score_answer_case(case, generated))
+
+    assert payload["id"] == "payment-types"
+    assert payload["answer"] == "Réponse [S1]"
+    assert payload["citations"][0]["section_id"] == 10
+    assert payload["retrieved_sections"][0]["heading_path"] == "CONFIGURER ETPOS > Types de Règlement"
+    assert payload["total_latency_ms"] == 30.0
 
 
 def test_answer_scoring_detects_irrelevant_citation():
@@ -246,3 +358,96 @@ def test_answer_scoring_detects_irrelevant_citation():
 
     assert result.citation_presence_correct
     assert result.citation_relevance == 0.0
+    assert result.citation_expected_coverage == 0.0
+
+
+def test_rescore_answer_report_reuses_saved_answers_without_provider(tmp_path):
+    benchmark = tmp_path / "benchmark.jsonl"
+    benchmark.write_text(
+        json.dumps(
+            {
+                "id": "backup",
+                "category": "simple",
+                "question": "Comment sauvegarder ?",
+                "answerability": "full",
+                "relevant_section_groups": [["sauvegarde"]],
+                "expected_menu_path_groups": [["Système > Sauvegarde > Exporter"]],
+                "required_fact_groups": [["valider", "validez"]],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docs_database = tmp_path / "docs.db"
+    with sqlite3.connect(docs_database) as conn:
+        conn.execute(
+            "CREATE TABLE documents(id INTEGER PRIMARY KEY, content_hash TEXT NOT NULL)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE sections(
+                id INTEGER PRIMARY KEY,
+                document_id INTEGER NOT NULL,
+                heading_path TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_text TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("INSERT INTO documents(id, content_hash) VALUES (?, ?)", (1, "hash"))
+        conn.execute(
+            """
+            INSERT INTO sections(id, document_id, heading_path, source_url, source_text)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                99,
+                1,
+                "SÉCURITÉ ET FIABILITÉ > Sauvegarde",
+                "https://example.test/manual#backup",
+                "Procédure de sauvegarde via l'onglet Exporter.",
+            ),
+        )
+
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "question": "Comment sauvegarder ?",
+                        "answer": "Allez dans Système > Sauvegarde, puis ouvrez Exporter et validez. [S1]",
+                        "citations": [{"source_id": "S1", "section_id": 10}],
+                        "retrieval_latency_ms": 1.0,
+                        "generation_latency_ms": 2.0,
+                        "total_latency_ms": 3.0,
+                        "retrieved_sections": [
+                            {
+                                "section_id": 10,
+                                "title": "Sauvegarde",
+                                "heading_path": "SÉCURITÉ ET FIABILITÉ > Sauvegarde",
+                                "source_url": "https://example.test/manual#backup",
+                                "document_name": "ETPOS",
+                                "document_version": "5.34",
+                                "revision_date": "2026-01-30",
+                                "document_hash": "hash",
+                                "score": -1.0,
+                            }
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    results, summary = rescore_answer_report(benchmark, report, docs_database)
+
+    assert len(results) == 1
+    assert summary["fact_coverage"] == 1.0
+    assert summary["menu_path_coverage"] == 1.0
+    assert summary["citation_presence_accuracy"] == 1.0
+    assert summary["citation_relevance"] == 1.0
+    assert summary["citation_expected_coverage"] == 1.0

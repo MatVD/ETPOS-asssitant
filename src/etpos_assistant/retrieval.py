@@ -238,6 +238,76 @@ def _variant_trace(variant: SearchVariant, rows: list[RetrievedSection]) -> Vari
     )
 
 
+def _select_diverse_candidates(
+    ranked: list[tuple[RetrievedSection, CandidateTrace]],
+    concepts: tuple[RetrievalConcept, ...],
+    limit: int,
+    tuning: RetrievalTuning,
+    lexical_anchor_id: int | None = None,
+) -> list[RetrievedSection]:
+    if limit <= 0 or not ranked:
+        return []
+
+    lexical_anchor_index = next(
+        (index for index, (section, _trace) in enumerate(ranked) if section.id == lexical_anchor_id),
+        None,
+    )
+    if len(concepts) < 2:
+        selected_indexes = set(range(min(limit, len(ranked))))
+        if (
+            lexical_anchor_index is not None
+            and lexical_anchor_index not in selected_indexes
+            and selected_indexes
+        ):
+            selected_indexes.remove(max(selected_indexes))
+            selected_indexes.add(lexical_anchor_index)
+        return [
+            section
+            for index, (section, _trace) in enumerate(ranked)
+            if index in selected_indexes
+        ][:limit]
+
+    selected_ids: set[int] = set()
+    selected_indexes: set[int] = set()
+    if lexical_anchor_index is not None:
+        anchor_section = ranked[lexical_anchor_index][0]
+        selected_ids.add(anchor_section.id)
+        selected_indexes.add(lexical_anchor_index)
+    for concept in concepts:
+        prefix = f"{concept.key}:"
+        candidates_for_concept: list[tuple[int, float, int, RetrievedSection]] = []
+        for index, (section, trace) in enumerate(ranked):
+            if section.id in selected_ids:
+                continue
+            matched_count = sum(label.startswith(prefix) for label in trace.matched_variants)
+            if matched_count:
+                concept_signal = _signal_score(section, (concept,), tuning)
+                candidates_for_concept.append((matched_count, concept_signal, index, section))
+        if candidates_for_concept:
+            _matched_count, _concept_signal, index, section = max(
+                candidates_for_concept,
+                key=lambda item: (item[0], item[1], -item[2]),
+            )
+            selected_ids.add(section.id)
+            selected_indexes.add(index)
+        if len(selected_ids) >= limit:
+            break
+
+    for index, (section, _trace) in enumerate(ranked):
+        if len(selected_ids) >= limit:
+            break
+        if section.id in selected_ids:
+            continue
+        selected_ids.add(section.id)
+        selected_indexes.add(index)
+
+    return [
+        section
+        for index, (section, _trace) in enumerate(ranked)
+        if index in selected_indexes
+    ][:limit]
+
+
 def search_sections_with_trace(
     question: str,
     limit: int = 6,
@@ -275,9 +345,12 @@ def search_sections_with_trace(
 
         candidate_limit = max(tuning.candidate_limit_min, limit * tuning.candidate_limit_multiplier)
         candidates: dict[int, dict[str, object]] = {}
+        lexical_anchor_id: int | None = None
         for variant in plan:
             rows = _query_sections(conn, variant.query, candidate_limit, tuning)
             variant_traces.append(_variant_trace(variant, rows))
+            if variant.label == "lexical" and rows:
+                lexical_anchor_id = rows[0].id
             for rank, section in enumerate(rows, start=1):
                 candidate = candidates.setdefault(
                     section.id,
@@ -316,7 +389,13 @@ def search_sections_with_trace(
         ranked.append((replace(section, score=-final_score), trace))
 
     ranked.sort(key=lambda item: (item[0].score, item[1].best_bm25_score, item[0].id))
-    selected = [section for section, _ in ranked[:limit]]
+    selected = _select_diverse_candidates(
+        ranked,
+        analysis.concepts,
+        limit,
+        tuning,
+        lexical_anchor_id=lexical_anchor_id,
+    )
     ordered_traces = tuple(trace for _, trace in ranked)
     return selected, RetrievalTrace(
         analysis=analysis,

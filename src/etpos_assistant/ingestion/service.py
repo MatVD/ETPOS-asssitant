@@ -1,19 +1,123 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from ..config import settings
 from ..db import docs_db, init_docs_db
 from ..docs_store import build_versions_match, write_build_metadata
-from .fetch import fetch_html
+from .fetch import download_html, download_javascript, save_snapshot
 from .parser import ParsedDocument, parse_html
+from .support import (
+    composite_support_digest,
+    ensure_same_origin_asset,
+    find_support_component_url,
+    parse_support_client_bundle,
+    support_snapshot_payload,
+)
+from .validation import SourceContentError, validate_source_html
 
 
-def load_registry(path: Path = Path("config/sources.json")) -> list[dict]:
+def load_registry_config(path: Path = Path("config/sources.json")) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
-    return [source for source in data.get("sources", []) if source.get("enabled", False)]
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: le registre de sources doit être un objet JSON.")
+    return data
+
+
+def load_registry(
+    path: Path = Path("config/sources.json"),
+    *,
+    enabled_only: bool = True,
+) -> list[dict]:
+    data = load_registry_config(path)
+    sources = list(data.get("sources", []))
+    if enabled_only:
+        return [source for source in sources if source.get("enabled", False)]
+    return sources
+
+
+def registry_validation_benchmarks(
+    path: Path = Path("config/sources.json"),
+    *,
+    extra_source_ids: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    data = load_registry_config(path)
+    sources = list(data.get("sources", []))
+    selected_ids = {
+        str(source.get("id"))
+        for source in sources
+        if source.get("enabled", False)
+    }
+    selected_ids.update(source_id for source_id in extra_source_ids if source_id)
+
+    configured: list[object] = list(data.get("validation_benchmarks", []))
+    for source in sources:
+        if str(source.get("id")) in selected_ids:
+            configured.extend(source.get("validation_benchmarks", []))
+
+    paths: list[str] = []
+    for value in configured:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{path}: validation_benchmarks doit contenir uniquement des chemins non vides.")
+        normalized = value.strip()
+        if normalized not in paths:
+            paths.append(normalized)
+    return tuple(paths)
+
+
+@dataclass(frozen=True)
+class PreparedSource:
+    parsed: ParsedDocument
+    digest: str
+    snapshot_text: str
+    snapshot_suffix: str
+    component_url: str | None = None
+    component_digest: str | None = None
+
+
+TextDownloader = Callable[[str], Awaitable[tuple[str, str]]]
+
+
+async def prepare_source(
+    source: dict,
+    *,
+    html_downloader: TextDownloader | None = None,
+    javascript_downloader: TextDownloader | None = None,
+) -> PreparedSource:
+    html_fetch = html_downloader or download_html
+    javascript_fetch = javascript_downloader or download_javascript
+    html, page_digest = await html_fetch(source["url"])
+    try:
+        validate_source_html(source, html)
+        return PreparedSource(
+            parsed=parse_html(html, source["url"]),
+            digest=page_digest,
+            snapshot_text=html,
+            snapshot_suffix=".html",
+        )
+    except SourceContentError:
+        if str(source.get("validation_profile") or "").strip().lower() != "support_faq_answers":
+            raise
+
+    component_url = find_support_component_url(html, source["url"])
+    ensure_same_origin_asset(source["url"], component_url)
+    bundle_text, bundle_digest = await javascript_fetch(component_url)
+    parsed, parsed_component_url, _faq_count = parse_support_client_bundle(source, html, bundle_text)
+    if parsed_component_url != component_url:
+        raise SourceContentError("Le bundle Support analysé ne correspond pas au composant téléchargé.")
+    digest = composite_support_digest(page_digest, bundle_digest, component_url)
+    return PreparedSource(
+        parsed=parsed,
+        digest=digest,
+        snapshot_text=support_snapshot_payload(source["url"], html, component_url, bundle_text),
+        snapshot_suffix=".support.json",
+        component_url=component_url,
+        component_digest=bundle_digest,
+    )
 
 
 def index_parsed_source(
@@ -89,12 +193,17 @@ async def ingest_source(
     db_path: Path | None = None,
     skip_if_unchanged: bool = True,
 ) -> dict:
-    html, digest, snapshot_path = await fetch_html(source["id"], source["url"])
-    parsed = parse_html(html, source["url"])
+    prepared = await prepare_source(source)
+    snapshot_path = save_snapshot(
+        source["id"],
+        prepared.snapshot_text,
+        prepared.digest,
+        suffix=prepared.snapshot_suffix,
+    )
     return index_parsed_source(
         source,
-        parsed,
-        digest,
+        prepared.parsed,
+        prepared.digest,
         snapshot_path,
         datetime.now(UTC).isoformat(),
         db_path=db_path,

@@ -14,16 +14,18 @@ from .docs_store import (
     validate_docs_database,
     write_build_metadata,
 )
-from .ingestion.fetch import download_html, save_snapshot
-from .ingestion.parser import parse_html
-from .ingestion.service import index_parsed_source, load_registry
+from .ingestion.fetch import download_html, download_javascript, save_snapshot
+from .ingestion.service import PreparedSource, index_parsed_source, load_registry, prepare_source
 
 
 @dataclass(frozen=True)
 class DownloadedSource:
     source: dict
-    html: str
-    digest: str
+    prepared: PreparedSource
+
+    @property
+    def digest(self) -> str:
+        return self.prepared.digest
 
 
 @dataclass(frozen=True)
@@ -67,17 +69,34 @@ async def build_docs_candidate(
     registry_path: Path = Path("config/sources.json"),
     current_path: Path | None = None,
     candidate_dir: Path | None = None,
+    extra_source_ids: tuple[str, ...] = (),
 ) -> DocsUpdateCandidate:
-    sources = load_registry(registry_path)
+    all_sources = load_registry(registry_path, enabled_only=False)
+    known_ids = {str(source.get("id")) for source in all_sources}
+    requested_ids = {source_id.strip() for source_id in extra_source_ids if source_id.strip()}
+    unknown_ids = sorted(requested_ids - known_ids)
+    if unknown_ids:
+        raise DocsDatabaseError(
+            "Source candidate inconnue dans le registre : " + ", ".join(unknown_ids)
+        )
+    sources = [
+        source
+        for source in all_sources
+        if source.get("enabled", False) or str(source.get("id")) in requested_ids
+    ]
     if not sources:
-        raise DocsDatabaseError("Aucune source documentaire activée dans le registre.")
+        raise DocsDatabaseError("Aucune source documentaire activée ou sélectionnée pour la candidate.")
 
     current = current_path or settings.docs_db
     manifest = document_manifest(current)
     downloaded: list[DownloadedSource] = []
     for source in sources:
-        html, digest = await download_html(source["url"])
-        downloaded.append(DownloadedSource(source=source, html=html, digest=digest))
+        prepared = await prepare_source(
+            source,
+            html_downloader=download_html,
+            javascript_downloader=download_javascript,
+        )
+        downloaded.append(DownloadedSource(source=source, prepared=prepared))
 
     fingerprint = _corpus_fingerprint(downloaded)
     enabled_ids = {str(item.source["id"]) for item in downloaded}
@@ -127,9 +146,14 @@ async def build_docs_candidate(
             ):
                 snapshot_path = str(existing_snapshot)
             else:
-                snapshot_path = save_snapshot(source_id, item.html, item.digest)
+                snapshot_path = save_snapshot(
+                    source_id,
+                    item.prepared.snapshot_text,
+                    item.digest,
+                    suffix=item.prepared.snapshot_suffix,
+                )
 
-            parsed = parse_html(item.html, item.source["url"])
+            parsed = item.prepared.parsed
             if not parsed.sections:
                 raise DocsDatabaseError(f"Le parsing de {source_id} ne produit aucune section.")
             results.append(

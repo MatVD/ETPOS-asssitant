@@ -86,7 +86,9 @@ CODEX_MODEL=
 CODEX_TIMEOUT_SECONDS=120
 ```
 
-Laisser `CODEX_MODEL` vide utilise le modèle par défaut de Codex. Démarrer :
+Laisser `CODEX_MODEL` vide utilise le modèle par défaut de Codex. `etpos-assistant codex-status` affiche le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec **le même environnement filtré que le provider de production**. C'est utile lorsqu'un sandbox ou un service systemd modifie `HOME` : être connecté dans un Terminal utilisateur ne garantit pas qu'un autre environnement voie le même `~/.codex`.
+
+Démarrer :
 
 ```bash
 make dev
@@ -114,6 +116,7 @@ L'authentification doit être faite une fois avant de lancer le service. Aucun `
 etpos-assistant init-db
 etpos-assistant create-user
 etpos-assistant ingest
+etpos-assistant inspect-source etpos-support-fr
 etpos-assistant search "sauvegarde"
 etpos-assistant corpus-stats
 etpos-assistant codex-status
@@ -121,15 +124,26 @@ etpos-assistant backup-app-db
 etpos-assistant verify-app-backup /var/lib/etpos-assistant/backups/app-<timestamp>.db
 etpos-assistant restore-app-db /var/lib/etpos-assistant/backups/app-<timestamp>.db --target /tmp/app-restore-test.db
 etpos-assistant eval-retrieval --path eval/benchmark.jsonl
+etpos-assistant eval-retrieval --path eval/acceptance.jsonl
 etpos-assistant eval-answer --path eval/benchmark.jsonl --category menu_path --max-cases 5
+etpos-assistant eval-answer --path eval/benchmark.jsonl --case-id simple-clients --case-id synonym-customer-record
+etpos-assistant eval-answer --path eval/acceptance.jsonl --json-output eval/results/acceptance-<timestamp>.json
+etpos-assistant rescore-answer-report --benchmark eval/benchmark.jsonl --report eval/results/benchmark-<timestamp>.json
 etpos-assistant update-docs-db --dry-run
+etpos-assistant update-docs-db --dry-run --candidate-source etpos-support-fr --validation-benchmark eval/acceptance.jsonl --validation-benchmark eval/support.jsonl
+ETPOS_PROVIDER=codex etpos-assistant eval-answer --path eval/support.jsonl --docs-db data/docs-candidates/<candidate>.db --json-output eval/results/support-<timestamp>.json
 etpos-assistant docs-history
 etpos-assistant rollback-docs-db data/docs-history/docs-<timestamp>-<hash>.db
+make quality-baseline
 ```
+
+`make quality-baseline` est prévu pour être lancé depuis un Terminal normal disposant du vrai `HOME` utilisateur et d'un accès réseau. Il vérifie Codex, inspecte la source Support sans modifier `docs.db`, rejoue les trois jeux retrieval (`benchmark`, `acceptance` et contrat Support), puis produit les trois rapports JSON complets des réponses Codex dans `eval/results/`. Il s'arrête dès qu'une étape échoue.
+
+`inspect-source` télécharge et analyse une source déclarée sans modifier `docs.db`. Il peut donc être utilisé sur une source désactivée avant toute activation. La page Support/FAQ française charge actuellement ses réponses côté client : si le HTML initial ne contient que les questions, le pipeline retrouve le bundle `AppBridge` officiel sur le même hôte, en extrait statiquement les Q/R françaises sans exécuter JavaScript et refuse les constructions dynamiques telles que `${...}`. Le hash documentaire combine la page et le bundle afin qu'une modification des réponses déclenche une reconstruction, et le snapshot composite conserve les deux contenus bruts. La validation de l'URL est appliquée à l'URL initiale **et** à l'URL finale après redirection afin qu'une source autorisée ne puisse pas rediriger silencieusement vers un hôte non autorisé. Une source désactivée peut être incluse explicitement dans un `update-docs-db --dry-run` avec `--candidate-source` ; ce flag est refusé hors dry-run afin qu'un test de candidate ne puisse pas activer silencieusement la source. Après validation réelle de l'extraction, du retrieval et des réponses Codex sur candidate, Support est déclaré actif dans le registre. Les benchmarks globaux du registre sont rejoués automatiquement sur toute candidate et `eval/support.jsonl` est en plus attaché à la source Support comme contrat bloquant.
 
 ## Benchmark qualité ETPOS
 
-Le benchmark principal est `eval/benchmark.jsonl`. Il couvre actuellement 45 cas répartis entre questions simples, procédures, chemins de menus, synonymes, concepts métier ambigus, réponses partielles et questions non répondables.
+Le benchmark principal est `eval/benchmark.jsonl`. Il couvre actuellement 47 cas répartis entre questions simples, procédures, chemins de menus, synonymes, concepts métier ambigus, réponses partielles et questions non répondables. Un second jeu `eval/acceptance.jsonl` utilise des formulations plus naturelles qui n'étaient pas présentes dans le benchmark de développement initial ; il sert désormais de suite de régression d'acceptation après avoir révélé plusieurs lacunes de vocabulaire. `eval/support.jsonl` est un contrat de source distinct de 10 cas, dérivé des 10 FAQ françaises officielles extraites : son but est de vérifier qu'une candidate contenant la source Support récupère effectivement chaque Q/R attendue avant activation, sans utiliser ces cas pour régler individuellement le vocabulaire métier.
 
 Chaque cas peut déclarer :
 
@@ -137,7 +151,8 @@ Chaque cas peut déclarer :
 - un niveau de réponse `full`, `partial` ou `none` ;
 - `expected_heading_paths`, qui décrit l'arborescence du manuel ;
 - `expected_menu_paths`, réservé aux vrais chemins de navigation dans l'interface ETPOS ;
-- des faits obligatoires à retrouver dans la réponse finale ;
+- `expected_menu_path_groups` lorsqu'une même procédure possède plusieurs libellés de chemin explicitement documentés ;
+- `required_facts` ou `required_fact_groups` pour accepter plusieurs formulations textuelles d'un même fait sans utiliser de juge LLM ;
 - une note expliquant les ambiguïtés particulières du cas.
 
 `eval-retrieval` mesure actuellement de façon déterministe :
@@ -148,9 +163,9 @@ Chaque cas peut déclarer :
 - latence moyenne et p95 du retrieval ;
 - détail par catégorie.
 
-Baseline locale du corpus ETPOS V5.34 au 17 septembre 2026, avec `K=5` et 47 cas : Recall@5 **100,0 %**, MRR **0,842**, couverture des groupes **97,8 %**, latence p95 d'environ **51 ms**. Le déficit de couverture restant vient du cas ambigu « ouvrir un compte pour un client », pour lequel un seul des deux sens attendus apparaît dans le top 5.
+Baseline déterministe actuelle du corpus ETPOS V5.34 au 17 septembre 2026, avec `K=5` et 47 cas : **44 cas répondables**, Recall@5 **100,0 %**, MRR **0,876** et couverture des groupes **100,0 %**. Les attentes ont été resserrées pour éviter les faux positifs dus à des titres de chapitres trop larges ; les questions sur la fiche client ciblent maintenant réellement le passage `Fichiers > Fichier de clients`. Sur `eval/acceptance.jsonl`, **13 cas répondables** obtiennent Recall@5 **100,0 %**, MRR **0,699** et couverture **100,0 %**. Une candidate Manuel + Support testée le même jour conserve Recall@5 et couverture à **100,0 %** sur ces deux jeux, avec MRR **0,863** sur le benchmark principal et **0,699** sur l'acceptance. Le contrat `eval/support.jsonl` atteint lui aussi Recall@5 et couverture **100,0 %** sur ses 10 FAQ, avec MRR **0,773**. Les cas qui demandent une information actuelle absente de la documentation, mais pour lesquels la documentation fournit tout de même une information ETPOS utile, sont classés `partial` plutôt que `none`.
 
-`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS, la présence et la pertinence des citations, ainsi que la latence complète. `--category` et `--max-cases` permettent des campagnes ciblées sans lancer les 47 appels Codex à chaque fois.
+`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS et la présence des citations. Deux indicateurs de citation sont distingués : la **couverture des passages attendus par les citations**, qui vérifie que chaque groupe documentaire attendu est effectivement cité, et la **part des citations dans les passages attendus**, qui reste un diagnostic secondaire car une réponse peut légitimement citer des sections supplémentaires pour justifier des détails complémentaires. Aucun de ces indicateurs ne constitue à lui seul une mesure sémantique du soutien de chaque affirmation. `--docs-db` permet de tester une candidate sans l'activer ; `--case-id`, `--category` et `--max-cases` permettent des campagnes ciblées. `rescore-answer-report` réapplique un benchmark modifié à un rapport JSON existant, en relisant les sections de `docs.db`, sans faire un nouvel appel Codex.
 
 L'abstention complète utilise une phrase canonique afin d'être mesurable sans juge LLM. Les hallucinations ne sont volontairement pas notées automatiquement par `eval-answer` : une revue humaine ou un protocole de juge distinct et validé reste nécessaire avant de publier un taux d'hallucination. Le CI/CD de déploiement continue donc d'exécuter uniquement l'évaluation retrieval, déterministe et rapide.
 

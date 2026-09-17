@@ -28,14 +28,28 @@ from .docs_store import (
 from .docs_update import build_docs_candidate
 from .evaluation import (
     BenchmarkError,
+    answer_result_to_dict,
     generate_answer_for_case,
     load_benchmark,
     retrieval_threshold_failures,
+    rescore_answer_report,
     run_retrieval_benchmark,
     score_answer_case,
     summarize_answers,
 )
-from .ingestion import ingest_enabled_sources
+from .ingestion import ingest_enabled_sources, load_registry
+from .ingestion.service import registry_validation_benchmarks
+from .ingestion.fetch import download_html, download_javascript
+from .ingestion.parser import parse_html
+from .ingestion.support import (
+    ensure_same_origin_asset,
+    extract_french_faq_items,
+    faq_items_to_document,
+    find_support_component_url,
+    validate_faq_items,
+)
+from .ingestion.validation import SourceContentError, validate_source_html
+from .providers.codex_cli import codex_auth_directory, codex_environment
 from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
 
@@ -109,10 +123,89 @@ def cmd_ingest(_args) -> None:
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
 
+async def _run_inspect_source(args) -> None:
+    registry_path = Path(args.registry)
+    try:
+        sources = load_registry(registry_path, enabled_only=False)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Impossible de lire le registre {registry_path}: {exc}") from exc
+
+    source = next((item for item in sources if str(item.get("id")) == args.source_id), None)
+    if source is None:
+        raise SystemExit(f"Source inconnue dans {registry_path}: {args.source_id}")
+
+    try:
+        html, digest = await download_html(source["url"])
+    except Exception as exc:
+        raise SystemExit(f"Téléchargement impossible pour {args.source_id}: {exc}") from exc
+
+    validation_error: str | None = None
+    validation_method = "html"
+    component_url: str | None = None
+    component_digest: str | None = None
+    extracted_faqs: int | None = None
+    try:
+        validate_source_html(source, html)
+        parsed = parse_html(html, source["url"])
+    except SourceContentError as exc:
+        validation_error = str(exc)
+        parsed = parse_html(html, source["url"])
+        if str(source.get("validation_profile") or "").strip().lower() == "support_faq_answers":
+            try:
+                component_url = find_support_component_url(html, source["url"])
+                ensure_same_origin_asset(source["url"], component_url)
+                bundle_text, component_digest = await download_javascript(component_url)
+                faq_items = extract_french_faq_items(bundle_text)
+                validate_faq_items(source, faq_items)
+                parsed = faq_items_to_document(faq_items, source["url"])
+                extracted_faqs = len(faq_items)
+                validation_error = None
+                validation_method = "static_client_bundle"
+            except (SourceContentError, OSError, ValueError) as bundle_exc:
+                validation_error = f"{validation_error} Fallback bundle: {bundle_exc}"
+
+    report = {
+        "id": source["id"],
+        "name": source.get("name"),
+        "url": source["url"],
+        "type": source.get("type"),
+        "enabled": bool(source.get("enabled", False)),
+        "digest": digest,
+        "validation_method": validation_method,
+        "component_url": component_url,
+        "component_digest": component_digest,
+        "extracted_faqs": extracted_faqs,
+        "document_title": parsed.title,
+        "document_version": parsed.version,
+        "revision_date": parsed.revision_date,
+        "sections": len(parsed.sections),
+        "total_source_chars": sum(len(section.source_text) for section in parsed.sections),
+        "validation": "failed" if validation_error else "ok",
+        "validation_error": validation_error,
+        "section_preview": [
+            {
+                "title": section.title,
+                "heading_path": section.heading_path,
+                "chars": len(section.source_text),
+            }
+            for section in parsed.sections[:10]
+        ],
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if validation_error:
+        raise SystemExit("Source inspectée mais refusée par les garde-fous de qualité.")
+
+
+
+def cmd_inspect_source(args) -> None:
+    asyncio.run(_run_inspect_source(args))
+
+
 def cmd_search(args) -> None:
     init_all()
+    docs_path = Path(args.docs_db).expanduser() if args.docs_db else None
     if args.debug:
-        rows, trace = search_sections_with_trace(args.query, limit=args.limit)
+        rows, trace = search_sections_with_trace(args.query, limit=args.limit, db_path=docs_path)
         analysis = trace.analysis
         print("Analyse de requête:")
         print(f"  normalisée: {analysis.normalized_question}")
@@ -135,7 +228,7 @@ def cmd_search(args) -> None:
                     f"via={','.join(candidate.matched_variants)}"
                 )
     else:
-        rows = search_sections(args.query, limit=args.limit)
+        rows = search_sections(args.query, limit=args.limit, db_path=docs_path)
 
     if not rows:
         print("Aucun résultat.")
@@ -217,8 +310,19 @@ def cmd_eval_retrieval(args) -> None:
 
 
 async def _run_update_docs(args) -> None:
+    extra_source_ids = tuple(args.candidate_source or ())
+    if extra_source_ids and not args.dry_run:
+        raise SystemExit("--candidate-source est réservé au mode --dry-run et ne peut pas activer une source désactivée.")
+    registry_path = Path(args.registry)
     try:
-        candidate = await build_docs_candidate(registry_path=Path(args.registry))
+        automatic_validation_paths = registry_validation_benchmarks(
+            registry_path,
+            extra_source_ids=extra_source_ids,
+        )
+        candidate = await build_docs_candidate(
+            registry_path=registry_path,
+            extra_source_ids=extra_source_ids,
+        )
     except (OSError, ValueError, DocsDatabaseError) as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -256,6 +360,42 @@ async def _run_update_docs(args) -> None:
             + "; ".join(failures)
             + f". Base conservée pour inspection : {candidate.candidate_path}"
         )
+
+    validation_paths: list[str] = []
+    for validation_path_value in (*automatic_validation_paths, *(args.validation_benchmark or ())):
+        if validation_path_value not in validation_paths:
+            validation_paths.append(validation_path_value)
+
+    for validation_path_value in validation_paths:
+        validation_path = Path(validation_path_value)
+        try:
+            validation_cases = load_benchmark(validation_path)
+            _validation_results, validation_summary = run_retrieval_benchmark(
+                validation_cases,
+                args.limit,
+                db_path=candidate.candidate_path,
+            )
+            validation_failures = retrieval_threshold_failures(
+                validation_summary,
+                min_recall=args.min_recall,
+                min_group_coverage=args.min_group_coverage,
+            )
+        except (OSError, BenchmarkError, DocsDatabaseError) as exc:
+            raise SystemExit(str(exc)) from exc
+        print(
+            f"Candidate validation {validation_path}: "
+            f"Recall@{args.limit}={validation_summary['recall_at_k']:.3f}, "
+            f"MRR={validation_summary['mrr']:.3f}, "
+            f"couverture={validation_summary['group_coverage']:.3f}, "
+            f"p95={validation_summary['latency_p95_ms']:.1f}ms"
+        )
+        if validation_failures:
+            raise SystemExit(
+                f"Candidate refusée par {validation_path}: "
+                + "; ".join(validation_failures)
+                + f". Base conservée pour inspection : {candidate.candidate_path}"
+            )
+
     if args.dry_run:
         print(f"Dry-run validé. Candidate non activée : {candidate.candidate_path}")
         return
@@ -305,6 +445,33 @@ def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value * 100:.1f}%"
 
 
+def _print_answer_summary(summary: dict, *, include_latency: bool = True) -> None:
+    print(f"Abstention correcte: {_pct(summary['abstention_accuracy'])}")
+    print(
+        f"Faits obligatoires: {_pct(summary['fact_coverage'])} "
+        f"({summary['fact_matches']}/{summary['fact_total']})"
+    )
+    print(
+        f"Chemins de menus: {_pct(summary['menu_path_coverage'])} "
+        f"({summary['menu_matches']}/{summary['menu_total']})"
+    )
+    print(f"Présence des citations: {_pct(summary['citation_presence_accuracy'])}")
+    print(
+        f"Couverture des passages attendus par les citations: "
+        f"{_pct(summary['citation_expected_coverage'])} "
+        f"({summary['matched_citation_groups']}/{summary['expected_citation_groups']})"
+    )
+    print(
+        f"Part des citations dans les passages attendus: {_pct(summary['citation_relevance'])} "
+        f"({summary['relevant_citations']}/{summary['citations']})"
+    )
+    if include_latency:
+        print(
+            f"Latence réponse complète: moyenne {summary['latency_mean_ms']:.0f}ms, "
+            f"p95 {summary['latency_p95_ms']:.0f}ms"
+        )
+
+
 async def _run_eval_answer(args) -> None:
     path = Path(args.path)
     try:
@@ -312,6 +479,13 @@ async def _run_eval_answer(args) -> None:
     except (OSError, BenchmarkError) as exc:
         raise SystemExit(str(exc)) from exc
 
+    if args.case_id:
+        selected_ids = set(args.case_id)
+        known_ids = {case.case_id for case in cases}
+        unknown_ids = sorted(selected_ids - known_ids)
+        if unknown_ids:
+            raise SystemExit(f"Cas inconnus: {', '.join(unknown_ids)}")
+        cases = [case for case in cases if case.case_id in selected_ids]
     if args.category:
         selected_categories = set(args.category)
         cases = [case for case in cases if case.category in selected_categories]
@@ -322,9 +496,16 @@ async def _run_eval_answer(args) -> None:
     if not cases:
         raise SystemExit("Aucun cas du benchmark ne correspond aux filtres demandés.")
 
+    docs_path = Path(args.docs_db).expanduser() if args.docs_db else None
+    if docs_path is not None:
+        try:
+            validate_docs_database(docs_path, require_delete_journal=False)
+        except DocsDatabaseError as exc:
+            raise SystemExit(str(exc)) from exc
+
     results = []
     for case in cases:
-        answer = await generate_answer_for_case(case, limit=args.limit)
+        answer = await generate_answer_for_case(case, limit=args.limit, db_path=docs_path)
         result = score_answer_case(case, answer)
         results.append(result)
         facts = f"faits={result.matched_facts}/{result.expected_facts}" if result.expected_facts else "faits=n/a"
@@ -341,24 +522,35 @@ async def _run_eval_answer(args) -> None:
         )
 
     summary = summarize_answers(results)
-    print(f"Abstention correcte: {_pct(summary['abstention_accuracy'])}")
-    print(
-        f"Faits obligatoires: {_pct(summary['fact_coverage'])} "
-        f"({summary['fact_matches']}/{summary['fact_total']})"
-    )
-    print(
-        f"Chemins de menus: {_pct(summary['menu_path_coverage'])} "
-        f"({summary['menu_matches']}/{summary['menu_total']})"
-    )
-    print(f"Présence des citations: {_pct(summary['citation_presence_accuracy'])}")
-    print(
-        f"Pertinence des citations: {_pct(summary['citation_relevance'])} "
-        f"({summary['relevant_citations']}/{summary['citations']})"
-    )
-    print(
-        f"Latence réponse complète: moyenne {summary['latency_mean_ms']:.0f}ms, "
-        f"p95 {summary['latency_p95_ms']:.0f}ms"
-    )
+    if args.json_output:
+        output_path = Path(args.json_output).expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        git_sha = None
+        git_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if git_result.returncode == 0:
+            git_sha = git_result.stdout.strip() or None
+        report = {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "benchmark_path": str(path),
+            "provider": settings.provider,
+            "model": settings.codex_model or None,
+            "git_sha": git_sha,
+            "docs_db": str(docs_path) if docs_path is not None else str(settings.docs_db),
+            "limit": args.limit,
+            "summary": summary,
+            "cases": [answer_result_to_dict(result) for result in results],
+        }
+        output_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Rapport JSON: {output_path}")
+    _print_answer_summary(summary)
     print("Hallucinations: non mesurées automatiquement par cette commande.")
 
 
@@ -371,13 +563,63 @@ def cmd_eval_answer(args) -> None:
     asyncio.run(_run_eval_answer(args))
 
 
+def cmd_rescore_answer_report(args) -> None:
+    benchmark_path = Path(args.benchmark).expanduser()
+    report_path = Path(args.report).expanduser()
+    docs_db_path = Path(args.docs_db).expanduser()
+    try:
+        results, summary = rescore_answer_report(benchmark_path, report_path, docs_db_path)
+    except BenchmarkError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    print(f"Re-scoring sans appel Codex : {report_path}")
+    _print_answer_summary(summary)
+    review = [
+        result
+        for result in results
+        if not result.abstention_correct
+        or (result.expected_facts and result.matched_facts < result.expected_facts)
+        or (result.expected_menu_paths and result.matched_menu_paths < result.expected_menu_paths)
+        or not result.citation_presence_correct
+    ]
+    if review:
+        print("Cas à revoir :")
+        for result in review:
+            print(
+                f"  - {result.case.case_id}: "
+                f"answerability={result.case.answerability} "
+                f"abstention={'ok' if result.abstention_correct else 'ko'} "
+                f"faits={result.matched_facts}/{result.expected_facts} "
+                f"menus={result.matched_menu_paths}/{result.expected_menu_paths} "
+                f"citations={'ok' if result.citation_presence_correct else 'ko'} "
+                f"passages={result.relevant_citations}/{result.total_citations}"
+            )
+
+
 def cmd_codex_status(_args) -> None:
     binary = shutil.which(settings.codex_binary) or (settings.codex_binary if Path(settings.codex_binary).is_file() else None)
     if not binary:
         raise SystemExit("Codex CLI introuvable dans PATH.")
-    version = subprocess.run([binary, "--version"], text=True, capture_output=True, check=False)
+    env = codex_environment()
+    auth_dir = codex_auth_directory(env)
+    print(f"Codex binaire : {binary}")
+    print(f"Répertoire d'authentification effectif : {auth_dir or 'indéterminé'}")
+    print(f"CODEX_HOME explicite : {'oui' if env.get('CODEX_HOME') else 'non'}")
+    version = subprocess.run(
+        [binary, "--version"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
     print((version.stdout or version.stderr).strip())
-    status = subprocess.run([binary, "login", "status"], text=True, capture_output=True, check=False)
+    status = subprocess.run(
+        [binary, "login", "status"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
     output = (status.stdout or status.stderr).strip()
     print(output or f"codex login status: code {status.returncode}")
     if status.returncode != 0:
@@ -416,9 +658,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("ingest", help="Télécharger et indexer les sources activées")
     p.set_defaults(func=cmd_ingest)
 
+    p = sub.add_parser(
+        "inspect-source",
+        help="Télécharger et analyser une source déclarée sans modifier docs.db",
+    )
+    p.add_argument("source_id", help="Identifiant de source présent dans config/sources.json")
+    p.add_argument("--registry", default="config/sources.json")
+    p.set_defaults(func=cmd_inspect_source)
+
     p = sub.add_parser("search", help="Tester directement la recherche FTS5")
     p.add_argument("query")
     p.add_argument("--limit", type=int, default=6)
+    p.add_argument("--docs-db", help="Base documentaire explicite à interroger")
     p.add_argument("--debug", action="store_true", help="Afficher l'analyse, les variantes FTS et la fusion des scores")
     p.set_defaults(func=cmd_search)
 
@@ -447,11 +698,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--registry", default="config/sources.json")
     p.add_argument("--benchmark", default="eval/benchmark.jsonl")
+    p.add_argument(
+        "--validation-benchmark",
+        action="append",
+        help="Benchmark supplémentaire appliqué à la candidate ; Recall/couverture sont des garde-fous, MRR est reporté",
+    )
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--min-recall", type=float, default=0.95)
     p.add_argument("--min-mrr", type=float, default=0.80)
     p.add_argument("--min-group-coverage", type=float, default=0.95)
     p.add_argument("--keep-history", type=int, default=settings.docs_history_keep)
+    p.add_argument(
+        "--candidate-source",
+        action="append",
+        help="Inclure une source désactivée uniquement dans une candidate dry-run ; option répétable",
+    )
     p.add_argument("--dry-run", action="store_true", help="Construire et tester sans activer")
     p.set_defaults(func=cmd_update_docs_db)
 
@@ -465,14 +726,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("eval-answer", help="Mesurer les réponses finales avec le provider Codex")
     p.add_argument("--path", default="eval/benchmark.jsonl")
+    p.add_argument("--docs-db", help="Base documentaire explicite à utiliser sans l'activer")
     p.add_argument("--limit", type=int, default=6, help="Nombre de passages injectés dans la réponse")
+    p.add_argument(
+        "--case-id",
+        action="append",
+        help="Limiter à un identifiant de cas précis ; option répétable",
+    )
     p.add_argument(
         "--category",
         action="append",
         help="Limiter à une catégorie du benchmark ; option répétable",
     )
     p.add_argument("--max-cases", type=int, help="Limiter le nombre de cas exécutés")
+    p.add_argument(
+        "--json-output",
+        help="Écrire un rapport JSON détaillé pour comparaison et revue humaine",
+    )
     p.set_defaults(func=cmd_eval_answer)
+
+    p = sub.add_parser(
+        "rescore-answer-report",
+        help="Recalculer un rapport eval-answer existant sans rappeler Codex",
+    )
+    p.add_argument("--benchmark", default="eval/benchmark.jsonl")
+    p.add_argument("--report", required=True)
+    p.add_argument("--docs-db", default=str(settings.docs_db))
+    p.set_defaults(func=cmd_rescore_answer_report)
     return parser
 
 

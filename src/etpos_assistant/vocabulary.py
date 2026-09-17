@@ -8,6 +8,7 @@ from dataclasses import dataclass
 CREATE_INTENT_TERMS = (
     "ajouter",
     "creer",
+    "cree",
     "creation",
     "nouveau",
     "nouvelle",
@@ -160,6 +161,22 @@ UTILISATEUR = RetrievalConcept(
     text_signals=("les utilisateurs sont", "fichier utilisateurs", "utilisateur a modifier"),
 )
 
+CLIENT_FICHIER = RetrievalConcept(
+    key="CLIENT_FICHIER",
+    query_variants=(
+        ("gestion", "clients", "fichier"),
+        ("fichier", "clients"),
+        ("modifier", "client"),
+    ),
+    path_signals=("gestion des clients",),
+    text_signals=(
+        "fichier de clients",
+        "stocke les informations sur les clients",
+        "donnees de facturation",
+    ),
+    negative_signals=("compte courant", "comptes courants", "reglement client"),
+)
+
 MODE_FONCTIONNEMENT = RetrievalConcept(
     key="MODE_FONCTIONNEMENT",
     query_variants=(
@@ -214,6 +231,40 @@ MODE_BALANCE = RetrievalConcept(
     text_signals=("mode balance", "mode de fonctionnement de type balance", "mode type de balance"),
 )
 
+SAUVEGARDE = RetrievalConcept(
+    key="SAUVEGARDE",
+    query_variants=(
+        ("sauvegarde",),
+        ("sauvegarde", "exporter"),
+        ("sauvegarde", "automatique"),
+    ),
+    path_signals=("sauvegarde", "securite et fiabilite"),
+    text_signals=("sauvegarde", "sauvegarde automatique", "onglet exporter"),
+)
+
+SAUVEGARDE_AUTOMATIQUE = RetrievalConcept(
+    key="SAUVEGARDE_AUTOMATIQUE",
+    query_variants=(
+        ("sauvegarde", "automatique"),
+        ("sauvegarde", "planification"),
+        ("sauvegarde", "quotidienne"),
+    ),
+    path_signals=("sauvegarde",),
+    text_signals=("sauvegarde automatique", "sauvegardes automatiques"),
+)
+
+PERMISSIONS_UTILISATEUR = RetrievalConcept(
+    key="PERMISSIONS_UTILISATEUR",
+    query_variants=(
+        ("definir", "permissions"),
+        ("utilisateurs", "permissions"),
+        ("fichier", "utilisateurs"),
+    ),
+    path_signals=("gestion des utilisateurs", "definir les permissions"),
+    text_signals=("permissions", "fichier utilisateurs"),
+)
+
+
 CARTE_GENERIQUE = RetrievalConcept(
     key="CARTE_GENERIQUE",
     query_variants=(
@@ -227,6 +278,25 @@ CARTE_GENERIQUE = RetrievalConcept(
 
 CONCEPT_RULES = (
     ConceptRule(
+        concept=SAUVEGARDE,
+        any_phrases=("copie de securite", "copies de securite", "backup", "backups"),
+    ),
+    ConceptRule(
+        concept=SAUVEGARDE_AUTOMATIQUE,
+        required_term_groups=(
+            ("sauvegarde", "sauvegardes", "backup", "backups"),
+            ("automatique", "automatiquement", "planifier", "programmer", "quotidien", "quotidienne", "nuit", "nuits"),
+        ),
+    ),
+    ConceptRule(
+        concept=PERMISSIONS_UTILISATEUR,
+        required_term_groups=(
+            ("droit", "droits", "permission", "permissions", "limiter"),
+            ("utilisateur", "utilisateurs", "operateur", "operateurs", "employe", "employes", "caissier", "caissiers"),
+        ),
+        any_phrases=("droits utilisateur", "droits des utilisateurs", "definir les permissions"),
+    ),
+    ConceptRule(
         concept=REGLEMENT_MIXTE,
         any_phrases=(
             "reglement mixte",
@@ -237,9 +307,25 @@ CONCEPT_RULES = (
         ),
     ),
     ConceptRule(
+        concept=REGLEMENT_MIXTE,
+        required_term_groups=(
+            ("payer", "paiement", "encaisser", "regler"),
+            ("especes", "cash"),
+            ("carte", "cb"),
+        ),
+    ),
+    ConceptRule(
         concept=MODE_BALANCE,
         any_phrases=("mode pesee", "mode de pesee", "caisse en mode pesee"),
         required_term_groups=(("pesee", "pesage", "peser"),),
+    ),
+    ConceptRule(
+        concept=CLIENT_FICHIER,
+        required_term_groups=(
+            CLIENT_TERMS,
+            ("fiche", "fichier", "gerer", "gere", "gestion", "modifier", "modifie", "editer"),
+        ),
+        excluded_phrases=("compte courant", "comptes courants", "reglement client"),
     ),
     ConceptRule(
         concept=ARTICLE,
@@ -283,6 +369,14 @@ CONCEPT_RULES = (
     ConceptRule(
         concept=UTILISATEUR,
         required_term_groups=(USER_TERMS,),
+    ),
+    ConceptRule(
+        concept=UTILISATEUR,
+        required_term_groups=(
+            ("personne", "personnes", "employe", "employes", "caissier", "caissiers"),
+            ("connecter", "connexion", "utiliser", "acces"),
+            CREATE_INTENT_TERMS,
+        ),
     ),
     ConceptRule(
         concept=COMPTE_VENTE,
