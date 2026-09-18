@@ -108,10 +108,14 @@ def _validate_news_article(source: dict, html: str) -> None:
     time_value = ""
     if isinstance(time_node, Tag):
         time_value = f"{time_node.get('datetime', '')} {time_node.get_text(' ', strip=True)}"
-    date_haystack = f"{time_value} {article_text}"
+    publication_meta = soup.find("meta", attrs={"property": "article:published_time"})
+    publication_value = ""
+    if isinstance(publication_meta, Tag):
+        publication_value = str(publication_meta.get("content") or "")
+    date_haystack = f"{publication_value} {time_value} {article_text}"
     publication_patterns = (
-        r"\b20\d{2}[./-]\d{1,2}[./-]\d{1,2}\b",
-        r"\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b",
+        r"(?<!\d)20\d{2}[./-]\d{1,2}[./-]\d{1,2}(?!\d)",
+        r"(?<!\d)\d{1,2}[./-]\d{1,2}[./-]20\d{2}(?!\d)",
     )
     if not any(re.search(pattern, date_haystack) for pattern in publication_patterns):
         raise SourceContentError(f"{source['id']}: aucune date de publication exploitable n'a été détectée.")

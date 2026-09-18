@@ -46,6 +46,20 @@ def _detect_version(text: str) -> str | None:
     return f"V{match.group(1)}" if match else None
 
 
+def _detect_publication_date(soup: BeautifulSoup) -> str | None:
+    node = soup.find("meta", attrs={"property": "article:published_time"})
+    if not isinstance(node, Tag):
+        return None
+    value = str(node.get("content") or "").strip()
+    match = re.match(r"(20\d{2})-(\d{1,2})-(\d{1,2})", value)
+    if not match:
+        return None
+    try:
+        return date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+    except ValueError:
+        return None
+
+
 def _detect_revision(text: str) -> str | None:
     numeric = re.search(
         r"(?:dernière\s+)?(?:révision|revision|mis(?:e)?\s+à\s+jour)[^0-9]{0,40}(\d{1,2})[/-](\d{1,2})[/-](20\d{2})",
@@ -93,7 +107,7 @@ def parse_html(html: str, source_url: str) -> ParsedDocument:
     full_text = _normalized(root.get_text("\n", strip=True))
     title = _normalized(soup.title.get_text(" ", strip=True)) if soup.title else "Documentation ETPOS"
     version = _detect_version(full_text)
-    revision = _detect_revision(full_text)
+    revision = _detect_revision(full_text) or _detect_publication_date(soup)
 
     sections: list[ParsedSection] = []
     stack: dict[int, str] = {}

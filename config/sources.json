@@ -33,7 +33,7 @@
       "url": "https://etpos.fr/fr/blog/noticia/etpos-et-verifone-comment-fonctionne-l-integration-des-paiements-et-pourquoi-elle-va-simplifier-votre-activite",
       "type": "news",
       "priority": 30,
-      "enabled": false,
+      "enabled": true,
       "validation_profile": "news_article",
       "validation_benchmarks": [
         "eval/news.jsonl"
@@ -44,7 +44,7 @@
         "ETPOS",
         "Verifone"
       ],
-      "note": "Pilote niveau 3 volontairement désactivé. Une actualité reste explicitement déclarée ; aucun crawl automatique du blog. Activation uniquement après inspect-source, validation retrieval sur candidate et revue des réponses Codex."
+      "note": "Source niveau 3 activée après inspect-source réel, validation retrieval sans régression sur candidate et revue des réponses Codex. Une actualité reste explicitement déclarée ; aucun crawl automatique du blog."
     }
   ]
 }

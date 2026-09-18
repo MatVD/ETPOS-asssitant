@@ -16,3 +16,17 @@ def test_parser_extracts_sections_and_metadata():
     assert backup.source_url.endswith("#sauvegarde")
     assert backup.image_refs[0]["url"] == "https://www.etcloud.pt/images/backup.png"
     assert "ignore_me" not in " ".join(section.source_text for section in parsed.sections)
+
+
+def test_parser_uses_article_published_time_when_revision_is_absent():
+    html = """
+    <html><head>
+      <title>Actualité ETPOS</title>
+      <meta property="article:published_time" content="2026-08-04T23:00:00.000Z">
+    </head><body><article>
+      <h1>Actualité ETPOS</h1>
+      <p>Un contenu officiel suffisamment long pour constituer une section documentaire exploitable dans le parser.</p>
+    </article></body></html>
+    """
+    parsed = parse_html(html, "https://etpos.fr/fr/blog/noticia/test")
+    assert parsed.revision_date == "2026-08-04"

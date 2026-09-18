@@ -20,6 +20,9 @@ printf '%s\n' "== Codex =="
 printf '%s\n' "== Source Support officielle =="
 "$CLI" inspect-source etpos-support-fr
 
+printf '%s\n' "== Source Actualité Verifone officielle =="
+"$CLI" inspect-source etpos-news-verifone-integration-fr
+
 printf '%s\n' "== Retrieval benchmark principal =="
 "$CLI" eval-retrieval \
   --path eval/benchmark.jsonl \
@@ -45,6 +48,14 @@ printf '%s\n' "== Retrieval contrat Support =="
   --min-recall 0.95 \
   --min-group-coverage 0.95
 
+printf '%s\n' "== Retrieval contrat Actualités =="
+"$CLI" eval-retrieval \
+  --path eval/news.jsonl \
+  --docs-db data/docs.db \
+  --limit 5 \
+  --min-recall 0.95 \
+  --min-group-coverage 0.95
+
 export ETPOS_PROVIDER=codex
 
 printf '%s\n' "== Réponses Codex benchmark principal =="
@@ -62,8 +73,14 @@ printf '%s\n' "== Réponses Codex contrat Support =="
   --path eval/support.jsonl \
   --json-output "$RESULT_DIR/support-$STAMP.json"
 
+printf '%s\n' "== Réponses Codex contrat Actualités =="
+"$CLI" eval-answer \
+  --path eval/news.jsonl \
+  --json-output "$RESULT_DIR/news-$STAMP.json"
+
 printf '%s\n' "Baseline terminée. Rapports :"
 printf '  %s\n' \
   "$RESULT_DIR/benchmark-$STAMP.json" \
   "$RESULT_DIR/acceptance-$STAMP.json" \
-  "$RESULT_DIR/support-$STAMP.json"
+  "$RESULT_DIR/support-$STAMP.json" \
+  "$RESULT_DIR/news-$STAMP.json"

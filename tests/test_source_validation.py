@@ -89,6 +89,14 @@ def test_news_validation_rejects_missing_publication_date():
         validate_source_html(NEWS_SOURCE, _news_html(with_date=False))
 
 
+def test_news_validation_accepts_article_published_time_metadata():
+    html = _news_html(with_date=False).replace(
+        "<html><body>",
+        '<html><head><meta property="article:published_time" content="2026-08-04T23:00:00.000Z"></head><body>',
+    )
+    validate_source_html(NEWS_SOURCE, html)
+
+
 def test_news_validation_rejects_unexpected_title():
     with pytest.raises(SourceContentError, match="termes attendus"):
         validate_source_html(NEWS_SOURCE, _news_html(title="Une actualité ETPOS sans intégration de paiement"))
@@ -111,7 +119,7 @@ async def test_ingest_source_fails_closed_before_indexing_question_only_support(
         await service.ingest_source(SUPPORT_SOURCE)
 
 
-def test_source_registry_keeps_support_active_and_news_pilot_disabled():
+def test_source_registry_keeps_support_and_validated_news_active():
     registry_path = Path(__file__).resolve().parents[1] / "config" / "sources.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     support = next(source for source in registry["sources"] if source["id"] == "etpos-support-fr")
@@ -126,7 +134,7 @@ def test_source_registry_keeps_support_active_and_news_pilot_disabled():
     assert support["min_answered_faqs"] >= 3
     assert support["url"].startswith("https://etpos.fr/")
 
-    assert news["enabled"] is False
+    assert news["enabled"] is True
     assert news["type"] == "news"
     assert news["priority"] < support["priority"]
     assert news["validation_profile"] == "news_article"
@@ -138,7 +146,7 @@ def test_source_registry_keeps_support_active_and_news_pilot_disabled():
         registry_path,
         extra_source_ids=("etpos-news-verifone-integration-fr",),
     )
-    assert "eval/news.jsonl" not in default_benchmarks
+    assert "eval/news.jsonl" in default_benchmarks
     assert "eval/news.jsonl" in candidate_benchmarks
 
 

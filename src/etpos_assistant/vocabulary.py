@@ -284,7 +284,7 @@ CONCEPT_RULES = (
     ConceptRule(
         concept=SAUVEGARDE_AUTOMATIQUE,
         required_term_groups=(
-            ("sauvegarde", "sauvegardes", "backup", "backups"),
+            ("sauvegarde", "sauvegardes", "sauvegarder", "backup", "backups"),
             ("automatique", "automatiquement", "planifier", "programmer", "quotidien", "quotidienne", "nuit", "nuits"),
         ),
     ),

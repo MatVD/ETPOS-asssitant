@@ -296,6 +296,11 @@ def test_natural_domain_phrasing_expands_to_documented_concepts():
     assert any(item.label.startswith("UTILISATEUR:") for item in implicit_user)
 
 
+def test_automatic_backup_verb_expands_to_documented_concept():
+    plan = build_search_plan("Comment sauvegarder automatiquement ETPOS dans le cloud ?")
+    assert any(item.label.startswith("SAUVEGARDE_AUTOMATIQUE:") for item in plan)
+
+
 def test_benchmark_synonyms_expand_to_documented_etpos_terms():
     article_plan = build_search_plan("Où gère-t-on les articles ?")
     payment_plan = build_search_plan("Comment encaisser avec deux moyens de paiement différents ?")
