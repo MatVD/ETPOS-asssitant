@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .base import SourceContext
-from .prompting import build_prompt
+from .prompting import AnswerStatusGate, build_prompt
 from ..config import settings
 
 
@@ -27,6 +27,7 @@ class CodexRunMetrics:
     cached_input_tokens: int | None = None
     output_tokens: int | None = None
     reasoning_output_tokens: int | None = None
+    stream_chunks: int | None = None
 
     def as_dict(self) -> dict[str, int | float | None]:
         return asdict(self)
@@ -226,6 +227,13 @@ class CodexCliProvider:
                 raise RuntimeError(f"Échec Codex CLI : {detail}")
 
         total_ms = (time.perf_counter() - run_started) * 1000.0
+        if not final_messages:
+            raise RuntimeError("Codex CLI n'a retourné aucun message assistant exploitable.")
+
+        gate = AnswerStatusGate()
+        output_chunks = gate.feed(final_messages[-1])
+        output_chunks.extend(gate.finish())
+
         self.last_metrics = CodexRunMetrics(
             prompt_chars=len(prompt),
             prompt_build_ms=prompt_build_ms,
@@ -237,11 +245,10 @@ class CodexCliProvider:
             cached_input_tokens=usage.get("cached_input_tokens"),
             output_tokens=usage.get("output_tokens"),
             reasoning_output_tokens=usage.get("reasoning_output_tokens"),
+            stream_chunks=len(output_chunks),
         )
 
-        if not final_messages:
-            raise RuntimeError("Codex CLI n'a retourné aucun message assistant exploitable.")
-
         # `codex exec --json` exposes completed agent messages, not token deltas.
-        # Keep the provider interface asynchronous and emit only verified assistant text.
-        yield final_messages[-1]
+        for chunk in output_chunks:
+            if chunk:
+                yield chunk

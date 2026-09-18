@@ -53,11 +53,17 @@ class Settings:
     public_origin: str = os.getenv("ETPOS_PUBLIC_ORIGIN", "").strip().rstrip("/")
     session_hours: int = int(os.getenv("ETPOS_SESSION_HOURS", "12"))
     provider: str = os.getenv("ETPOS_PROVIDER", "mock").strip().lower()
+    codex_transport: str = os.getenv("ETPOS_CODEX_TRANSPORT", "exec").strip().lower()
     codex_binary: str = os.getenv("CODEX_BINARY", "codex")
     codex_model: str = os.getenv("CODEX_MODEL", "").strip()
     codex_reasoning_effort: str = os.getenv("CODEX_REASONING_EFFORT", "").strip().lower()
     codex_model_verbosity: str = os.getenv("CODEX_MODEL_VERBOSITY", "").strip().lower()
     codex_home: Path | None = Path(os.environ["CODEX_HOME"]) if os.getenv("CODEX_HOME") else None
+    codex_app_home: Path | None = (
+        Path(os.environ["ETPOS_CODEX_APP_HOME"]).expanduser()
+        if os.getenv("ETPOS_CODEX_APP_HOME")
+        else None
+    )
     codex_timeout_seconds: int = int(os.getenv("CODEX_TIMEOUT_SECONDS", "120"))
     retrieval_limit: int = int(os.getenv("ETPOS_RETRIEVAL_LIMIT", "6"))
     source_char_limit: int = int(os.getenv("ETPOS_SOURCE_CHAR_LIMIT", "9000"))

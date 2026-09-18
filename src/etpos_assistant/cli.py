@@ -50,6 +50,7 @@ from .ingestion.support import (
 )
 from .ingestion.validation import SourceContentError, validate_source_html
 from .providers.codex_cli import codex_auth_directory, codex_environment
+from .rag import shutdown_provider_runtime
 from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
 
@@ -547,6 +548,7 @@ async def _run_eval_answer(args) -> None:
             "generated_at": datetime.now(UTC).isoformat(),
             "benchmark_path": str(path),
             "provider": settings.provider,
+            "codex_transport": settings.codex_transport if settings.provider == "codex" else None,
             "model": settings.codex_model or None,
             "reasoning_effort": settings.codex_reasoning_effort or None,
             "model_verbosity": settings.codex_model_verbosity or None,
@@ -566,13 +568,20 @@ async def _run_eval_answer(args) -> None:
     print("Hallucinations: non mesurées automatiquement par cette commande.")
 
 
+async def _run_eval_answer_with_shutdown(args) -> None:
+    try:
+        await _run_eval_answer(args)
+    finally:
+        await shutdown_provider_runtime()
+
+
 def cmd_eval_answer(args) -> None:
     if settings.provider != "codex":
         raise SystemExit(
             "eval-answer exige ETPOS_PROVIDER=codex afin de mesurer la réponse du provider de production."
         )
     init_all()
-    asyncio.run(_run_eval_answer(args))
+    asyncio.run(_run_eval_answer_with_shutdown(args))
 
 
 def cmd_rescore_answer_report(args) -> None:
@@ -613,8 +622,11 @@ def cmd_codex_status(_args) -> None:
     if not binary:
         raise SystemExit("Codex CLI introuvable dans PATH.")
     env = codex_environment()
+    if settings.codex_transport == "app-server" and settings.codex_app_home is not None:
+        env["CODEX_HOME"] = str(settings.codex_app_home)
     auth_dir = codex_auth_directory(env)
     print(f"Codex binaire : {binary}")
+    print(f"Transport Codex : {settings.codex_transport}")
     print(f"Répertoire d'authentification effectif : {auth_dir or 'indéterminé'}")
     print(f"CODEX_HOME explicite : {'oui' if env.get('CODEX_HOME') else 'non'}")
     version = subprocess.run(

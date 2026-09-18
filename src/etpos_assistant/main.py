@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import init_all
 from .security import same_origin_request
+from .rag import shutdown_provider_runtime
 from .routers import auth_router, chat_router, health_router, pages_router, sources_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -20,7 +21,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_all()
-    yield
+    try:
+        yield
+    finally:
+        await shutdown_provider_runtime()
 
 
 app = FastAPI(title="ETPOS Assistant", version="0.1.0", docs_url=None, redoc_url=None, lifespan=lifespan)

@@ -11,7 +11,7 @@ from .citations import normalize_citation_link
 from .config import settings
 from .db import app_db
 from .markdown import render_safe_markdown
-from .providers import CodexCliProvider, MockProvider, SourceContext
+from .providers import CodexAppServerProvider, CodexCliProvider, MockProvider, SourceContext
 from .providers.prompting import ABSTENTION_TEXT
 from .retrieval import RetrievedSection, search_sections
 from .vocabulary import analyze_query, normalize_domain_text
@@ -19,12 +19,33 @@ from .vocabulary import analyze_query, normalize_domain_text
 CITATION_RE = re.compile(r"\[S(\d+)\]")
 ABSTENTION = ABSTENTION_TEXT
 logger = logging.getLogger(__name__)
+_codex_app_server_provider: CodexAppServerProvider | None = None
 
 
 def get_provider():
+    global _codex_app_server_provider
+
     if settings.provider == "codex":
-        return CodexCliProvider()
+        if settings.codex_transport == "app-server":
+            if _codex_app_server_provider is None:
+                _codex_app_server_provider = CodexAppServerProvider()
+            return _codex_app_server_provider
+        if settings.codex_transport == "exec":
+            return CodexCliProvider()
+        raise RuntimeError(
+            f"Transport Codex inconnu: {settings.codex_transport!r}. "
+            "Valeurs attendues: exec ou app-server."
+        )
     return MockProvider()
+
+
+async def shutdown_provider_runtime() -> None:
+    global _codex_app_server_provider
+
+    provider = _codex_app_server_provider
+    _codex_app_server_provider = None
+    if provider is not None:
+        await provider.close()
 
 
 def _history(conversation_id: int) -> list[dict[str, str]]:

@@ -81,6 +81,8 @@ Puis activer Codex dans `.env` :
 
 ```bash
 ETPOS_PROVIDER=codex
+# exec = rollback compatible ; app-server = vrai streaming texte
+ETPOS_CODEX_TRANSPORT=exec
 CODEX_BINARY=codex
 CODEX_MODEL=
 CODEX_REASONING_EFFORT=
@@ -90,7 +92,7 @@ ETPOS_SOURCE_CHAR_LIMIT=9000
 CODEX_TIMEOUT_SECONDS=120
 ```
 
-Laisser `CODEX_MODEL`, `CODEX_REASONING_EFFORT` et `CODEX_MODEL_VERBOSITY` vides conserve les valeurs par défaut de Codex. Ces réglages existent pour des campagnes A/B mesurées ; les essais locaux `low` n'ont pas démontré un gain de latence assez fiable pour devenir la configuration par défaut. `ETPOS_RETRIEVAL_LIMIT` et `ETPOS_SOURCE_CHAR_LIMIT` bornent le contexte du chat ; leurs valeurs par défaut restent 6 passages et 9000 caractères par passage tant qu'une réduction n'a pas été validée par les benchmarks. `etpos-assistant codex-status` affiche le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec **le même environnement filtré que le provider de production**. C'est utile lorsqu'un sandbox ou un service systemd modifie `HOME` : être connecté dans un Terminal utilisateur ne garantit pas qu'un autre environnement voie le même `~/.codex`.
+`ETPOS_CODEX_TRANSPORT=exec` conserve le transport historique et sert de rollback. `ETPOS_CODEX_TRANSPORT=app-server` active le vrai streaming texte via `item/agentMessage/delta`. App Server garde un processus Codex chaud, mais crée un thread éphémère à chaque question : l'historique reste détenu par `app.db`. Laisser `CODEX_MODEL`, `CODEX_REASONING_EFFORT` et `CODEX_MODEL_VERBOSITY` vides conserve les valeurs par défaut de Codex. `ETPOS_RETRIEVAL_LIMIT` et `ETPOS_SOURCE_CHAR_LIMIT` bornent le contexte du chat ; leurs valeurs par défaut restent 6 passages et 9000 caractères par passage tant qu'une réduction n'a pas été validée par les benchmarks. `etpos-assistant codex-status` affiche le transport, le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec le même environnement filtré que le provider de production.
 
 Démarrer :
 
@@ -113,6 +115,15 @@ sudo -u etpos-assistant \
 ```
 
 L'authentification doit être faite une fois avant de lancer le service. Aucun `OPENAI_API_KEY` n'est nécessaire.
+
+Pour activer App Server en production, utiliser un répertoire d'authentification **dédié** au transport ETPOS, sans configuration utilisateur, règles, skills ou plugins :
+
+```bash
+ETPOS_CODEX_TRANSPORT=app-server
+ETPOS_CODEX_APP_HOME=/var/lib/etpos-assistant/codex-app
+```
+
+Ce répertoire doit être authentifié directement avec `codex login --device-auth` sous le compte Unix du service. Le backend refuse App Server en production si `ETPOS_CODEX_APP_HOME` n'est pas défini. Repasser `ETPOS_CODEX_TRANSPORT=exec` fournit le rollback immédiat.
 
 ## Commandes
 
@@ -179,7 +190,7 @@ L'abstention complète utilise une phrase canonique afin d'être mesurable sans 
 
 Le retrieval FTS5 est déjà très rapide : la baseline locale à K=5 reste autour de 22 ms de moyenne. Les mesures détaillées montrent que la latence de plusieurs secondes provient presque entièrement de Codex ; le démarrage local du sous-processus ne représente qu'environ 8 à 12 ms sur les appels instrumentés. Le backend journalise donc les temps par phase et les métriques de tokens plutôt que d'optimiser FTS5 sans preuve.
 
-L'interface SSE affiche désormais des états réels pendant l'attente : recherche documentaire, puis génération. Le texte Codex peut encore apparaître en un bloc final car `codex exec --json` ne fournit pas ici de deltas texte token-par-token. Le prompt privilégie une réponse concise et directe ; après ce changement, les contrats Acceptance, Support et Actualités conservent 100 % de couverture des groupes documentaires attendus, et Acceptance conserve 100 % d'abstention, de faits obligatoires et de chemins de menus. Les variantes `reasoning=low` / `model_verbosity=low` testées n'ont pas été retenues comme valeurs par défaut.
+L'interface SSE affiche des états réels pendant l'attente : recherche documentaire, puis génération. Avec le transport `app-server`, elle reçoit ensuite les fragments du `final_answer` au fil de l'eau via `item/agentMessage/delta` ; les raisonnements et événements internes ne sont pas exposés. Un marqueur interne `full / partial / none`, filtré avant affichage, permet de streamer les réponses utiles tout en conservant une abstention canonique déterministe. Les campagnes locales App Server conservent 100 % d'abstention, de faits obligatoires et de chemins de menus sur Acceptance, ainsi que 100 % de couverture des groupes documentaires attendus sur Acceptance, Support et Actualités. Le transport `exec` reste disponible comme fallback.
 
 ## Structure
 

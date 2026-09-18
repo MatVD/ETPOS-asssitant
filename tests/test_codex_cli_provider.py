@@ -7,7 +7,7 @@ from etpos_assistant.providers.codex_cli import (
     parse_agent_message,
     parse_turn_usage,
 )
-from etpos_assistant.providers.prompting import SYSTEM_INSTRUCTIONS
+from etpos_assistant.providers.prompting import ABSTENTION_TEXT, AnswerStatusGate, SYSTEM_INSTRUCTIONS
 
 
 def test_parse_agent_message_accepts_completed_agent_message():
@@ -38,9 +38,38 @@ def test_parse_turn_usage_accepts_documented_completed_turn_shape():
 
 def test_prompt_prefers_supported_partial_answer_before_full_abstention():
     assert "informations utiles" in SYSTEM_INSTRUCTIONS
-    assert "abstention complète uniquement" in SYSTEM_INSTRUCTIONS
+    assert "abstention complète" in SYSTEM_INSTRUCTIONS
     assert "absence d'un titre exactement identique" in SYSTEM_INSTRUCTIONS
     assert "concise et directe" in SYSTEM_INSTRUCTIONS
+    assert "[[ETPOS_STATUS:full]]" in SYSTEM_INSTRUCTIONS
+    assert "[[ETPOS_STATUS:partial]]" in SYSTEM_INSTRUCTIONS
+    assert "[[ETPOS_STATUS:none]]" in SYSTEM_INSTRUCTIONS
+
+
+def test_answer_status_gate_hides_marker_and_preserves_streaming():
+    gate = AnswerStatusGate()
+
+    assert gate.feed("[[ETPOS_") == []
+    assert gate.feed("STATUS:full]]\nBon") == ["Bon"]
+    assert gate.feed("jour [S1]") == ["jour [S1]"]
+    assert gate.finish() == []
+    assert gate.status == "full"
+
+
+def test_answer_status_gate_canonicalizes_none():
+    gate = AnswerStatusGate()
+
+    assert gate.feed("[[ETPOS_STATUS:none]]") == []
+    assert gate.finish() == [ABSTENTION_TEXT]
+    assert gate.status == "none"
+
+
+def test_answer_status_gate_falls_back_when_marker_is_missing():
+    gate = AnswerStatusGate()
+
+    assert gate.feed("Réponse sans marqueur\nSuite") == ["Réponse sans marqueur\nSuite"]
+    assert gate.finish() == []
+    assert gate.status == "unknown"
 
 
 def test_codex_command_is_ephemeral_and_read_only(monkeypatch):
