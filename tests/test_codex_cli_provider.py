@@ -5,6 +5,7 @@ from etpos_assistant.providers.codex_cli import (
     codex_auth_directory,
     codex_environment,
     parse_agent_message,
+    parse_turn_usage,
 )
 from etpos_assistant.providers.prompting import SYSTEM_INSTRUCTIONS
 
@@ -20,24 +21,71 @@ def test_parse_agent_message_ignores_other_events():
     assert parse_agent_message('not-json') is None
 
 
+def test_parse_turn_usage_accepts_documented_completed_turn_shape():
+    line = (
+        '{"type":"turn.completed","usage":{"input_tokens":24763,'
+        '"cached_input_tokens":24448,"output_tokens":122,"reasoning_output_tokens":0}}'
+    )
+    assert parse_turn_usage(line) == {
+        "input_tokens": 24763,
+        "cached_input_tokens": 24448,
+        "output_tokens": 122,
+        "reasoning_output_tokens": 0,
+    }
+    assert parse_turn_usage('{"type":"turn.started"}') is None
+    assert parse_turn_usage("not-json") is None
+
+
 def test_prompt_prefers_supported_partial_answer_before_full_abstention():
     assert "informations utiles" in SYSTEM_INSTRUCTIONS
     assert "abstention complète uniquement" in SYSTEM_INSTRUCTIONS
     assert "absence d'un titre exactement identique" in SYSTEM_INSTRUCTIONS
+    assert "concise et directe" in SYSTEM_INSTRUCTIONS
 
 
 def test_codex_command_is_ephemeral_and_read_only(monkeypatch):
     from etpos_assistant import config
 
-    object.__setattr__(config.settings, "codex_model", "")
-    command = _codex_command()
-    assert command[:4] == [config.settings.codex_binary, "--ask-for-approval", "never", "exec"]
-    assert "--ephemeral" in command
-    assert "--json" in command
-    assert "--ignore-user-config" in command
-    assert "--ignore-rules" in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
-    assert command[-1] == "-"
+    previous = (
+        config.settings.codex_model,
+        config.settings.codex_reasoning_effort,
+        config.settings.codex_model_verbosity,
+    )
+    try:
+        object.__setattr__(config.settings, "codex_model", "")
+        object.__setattr__(config.settings, "codex_reasoning_effort", "")
+        object.__setattr__(config.settings, "codex_model_verbosity", "")
+        command = _codex_command()
+        assert command[:4] == [config.settings.codex_binary, "--ask-for-approval", "never", "exec"]
+        assert "--ephemeral" in command
+        assert "--json" in command
+        assert "--ignore-user-config" in command
+        assert "--ignore-rules" in command
+        assert command[command.index("--sandbox") + 1] == "read-only"
+        assert command[-1] == "-"
+    finally:
+        object.__setattr__(config.settings, "codex_model", previous[0])
+        object.__setattr__(config.settings, "codex_reasoning_effort", previous[1])
+        object.__setattr__(config.settings, "codex_model_verbosity", previous[2])
+
+
+def test_codex_command_applies_explicit_performance_overrides():
+    from etpos_assistant import config
+
+    previous = (
+        config.settings.codex_reasoning_effort,
+        config.settings.codex_model_verbosity,
+    )
+    try:
+        object.__setattr__(config.settings, "codex_reasoning_effort", "low")
+        object.__setattr__(config.settings, "codex_model_verbosity", "low")
+        command = _codex_command()
+        assert 'model_reasoning_effort="low"' in command
+        assert 'model_verbosity="low"' in command
+        assert command.index("--config") < command.index("exec")
+    finally:
+        object.__setattr__(config.settings, "codex_reasoning_effort", previous[0])
+        object.__setattr__(config.settings, "codex_model_verbosity", previous[1])
 
 
 def test_codex_auth_directory_uses_explicit_codex_home_first():

@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import settings
 from .providers import SourceContext
 from .rag import ABSTENTION, finalize_answer, get_provider
 from .retrieval import RetrievedSection, search_sections
@@ -69,6 +70,7 @@ class GeneratedAnswer:
     retrieval_latency_ms: float
     generation_latency_ms: float
     total_latency_ms: float
+    provider_metrics: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -395,7 +397,7 @@ async def generate_answer_for_case(
             source_id=f"S{index + 1}",
             title=section.title,
             heading_path=section.heading_path,
-            text=section.source_text[:9000],
+            text=section.source_text[: settings.source_char_limit],
         )
         for index, section in enumerate(sections)
     ]
@@ -415,6 +417,12 @@ async def generate_answer_for_case(
     answer, citation_rows = finalize_answer("".join(chunks), sections)
     citations = tuple(citation_rows)
     total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+    provider_metrics = getattr(provider, "last_metrics", None)
+    metrics_payload = (
+        provider_metrics.as_dict()
+        if provider_metrics is not None and hasattr(provider_metrics, "as_dict")
+        else None
+    )
     return GeneratedAnswer(
         text=answer,
         citations=citations,
@@ -422,6 +430,7 @@ async def generate_answer_for_case(
         retrieval_latency_ms=retrieval_latency_ms,
         generation_latency_ms=generation_latency_ms,
         total_latency_ms=total_latency_ms,
+        provider_metrics=metrics_payload,
     )
 
 
@@ -529,6 +538,7 @@ def answer_result_to_dict(result: AnswerCaseResult) -> dict:
         "retrieval_latency_ms": result.answer.retrieval_latency_ms,
         "generation_latency_ms": result.answer.generation_latency_ms,
         "total_latency_ms": result.answer.total_latency_ms,
+        "provider_metrics": result.answer.provider_metrics,
         "citations": list(result.answer.citations),
         "retrieved_sections": [
             {
@@ -557,6 +567,24 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
     citation_group_total = sum(result.expected_citation_groups for result in results)
     citation_group_matches = sum(result.matched_citation_groups for result in results)
     latencies = [result.answer.total_latency_ms for result in results]
+    provider_metrics = [
+        result.answer.provider_metrics
+        for result in results
+        if isinstance(result.answer.provider_metrics, dict)
+    ]
+    provider_usage = None
+    if provider_metrics:
+        provider_usage = {
+            "cases": len(provider_metrics),
+            "input_tokens_total": sum(int(item.get("input_tokens") or 0) for item in provider_metrics),
+            "cached_input_tokens_total": sum(
+                int(item.get("cached_input_tokens") or 0) for item in provider_metrics
+            ),
+            "output_tokens_total": sum(int(item.get("output_tokens") or 0) for item in provider_metrics),
+            "reasoning_output_tokens_total": sum(
+                int(item.get("reasoning_output_tokens") or 0) for item in provider_metrics
+            ),
+        }
 
     return {
         "cases": len(results),
@@ -586,6 +614,7 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
         "citations": cited_total,
         "latency_mean_ms": sum(latencies) / len(latencies) if latencies else 0.0,
         "latency_p95_ms": _percentile(latencies, 0.95),
+        "provider_usage": provider_usage,
     }
 
 
@@ -676,6 +705,11 @@ def rescore_answer_report(
                     retrieval_latency_ms=float(payload.get("retrieval_latency_ms", 0.0)),
                     generation_latency_ms=float(payload.get("generation_latency_ms", 0.0)),
                     total_latency_ms=float(payload.get("total_latency_ms", 0.0)),
+                    provider_metrics=(
+                        payload.get("provider_metrics")
+                        if isinstance(payload.get("provider_metrics"), dict)
+                        else None
+                    ),
                 )
                 results.append(score_answer_case(case, answer))
     except sqlite3.Error as exc:

@@ -83,10 +83,14 @@ Puis activer Codex dans `.env` :
 ETPOS_PROVIDER=codex
 CODEX_BINARY=codex
 CODEX_MODEL=
+CODEX_REASONING_EFFORT=
+CODEX_MODEL_VERBOSITY=
+ETPOS_RETRIEVAL_LIMIT=6
+ETPOS_SOURCE_CHAR_LIMIT=9000
 CODEX_TIMEOUT_SECONDS=120
 ```
 
-Laisser `CODEX_MODEL` vide utilise le modèle par défaut de Codex. `etpos-assistant codex-status` affiche le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec **le même environnement filtré que le provider de production**. C'est utile lorsqu'un sandbox ou un service systemd modifie `HOME` : être connecté dans un Terminal utilisateur ne garantit pas qu'un autre environnement voie le même `~/.codex`.
+Laisser `CODEX_MODEL`, `CODEX_REASONING_EFFORT` et `CODEX_MODEL_VERBOSITY` vides conserve les valeurs par défaut de Codex. Ces réglages existent pour des campagnes A/B mesurées ; les essais locaux `low` n'ont pas démontré un gain de latence assez fiable pour devenir la configuration par défaut. `ETPOS_RETRIEVAL_LIMIT` et `ETPOS_SOURCE_CHAR_LIMIT` bornent le contexte du chat ; leurs valeurs par défaut restent 6 passages et 9000 caractères par passage tant qu'une réduction n'a pas été validée par les benchmarks. `etpos-assistant codex-status` affiche le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec **le même environnement filtré que le provider de production**. C'est utile lorsqu'un sandbox ou un service systemd modifie `HOME` : être connecté dans un Terminal utilisateur ne garantit pas qu'un autre environnement voie le même `~/.codex`.
 
 Démarrer :
 
@@ -167,9 +171,15 @@ Chaque cas peut déclarer :
 
 Baseline déterministe actuelle du corpus actif au 18 septembre 2026, avec `K=5` et 47 cas : **44 cas répondables**, Recall@5 **100,0 %**, MRR **0,881** et couverture des groupes **100,0 %**. Le corpus contient **3 documents / 273 sections** : manuel ETPOS V5.34, 10 FAQ Support et l'actualité officielle Verifone. Sur `eval/acceptance.jsonl`, **13 cas répondables** obtiennent Recall@5 **100,0 %**, MRR **0,692** et couverture **100,0 %**. Le contrat `eval/support.jsonl` atteint Recall@5 et couverture **100,0 %** sur ses 10 FAQ, avec MRR **0,773** ; `eval/news.jsonl` atteint Recall@5 et couverture **100,0 %** sur ses 3 cas, avec MRR **0,667**. Les cas qui demandent une information actuelle absente de la documentation, mais pour lesquels la documentation fournit tout de même une information ETPOS utile, sont classés `partial` plutôt que `none`.
 
-`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS et la présence des citations. Deux indicateurs de citation sont distingués : la **couverture des passages attendus par les citations**, qui vérifie que chaque groupe documentaire attendu est effectivement cité, et la **part des citations dans les passages attendus**, qui reste un diagnostic secondaire car une réponse peut légitimement citer des sections supplémentaires pour justifier des détails complémentaires. Aucun de ces indicateurs ne constitue à lui seul une mesure sémantique du soutien de chaque affirmation. `--docs-db` permet de tester une candidate sans l'activer ; `--case-id`, `--category` et `--max-cases` permettent des campagnes ciblées. `rescore-answer-report` réapplique un benchmark modifié à un rapport JSON existant, en relisant les sections de `docs.db`, sans faire un nouvel appel Codex.
+`eval-answer` constitue la seconde couche. Elle exige `ETPOS_PROVIDER=codex` et réutilise le même retrieval, le même prompt, le même provider et la même finalisation des citations que le chat de production. Elle mesure de façon déterministe l'abstention, la couverture des faits obligatoires, la restitution des vrais chemins de menus ETPOS et la présence des citations. Deux indicateurs de citation sont distingués : la **couverture des passages attendus par les citations**, qui vérifie que chaque groupe documentaire attendu est effectivement cité, et la **part des citations dans les passages attendus**, qui reste un diagnostic secondaire car une réponse peut légitimement citer des sections supplémentaires pour justifier des détails complémentaires. Aucun de ces indicateurs ne constitue à lui seul une mesure sémantique du soutien de chaque affirmation. Les rapports détaillés conservent aussi les métriques provider exposées par Codex : taille du prompt, temps de spawn, délai jusqu'au premier événement et au message assistant, tokens d'entrée, tokens d'entrée mis en cache, tokens de sortie et tokens de raisonnement. `--docs-db` permet de tester une candidate sans l'activer ; `--case-id`, `--category` et `--max-cases` permettent des campagnes ciblées. `rescore-answer-report` réapplique un benchmark modifié à un rapport JSON existant, en relisant les sections de `docs.db`, sans faire un nouvel appel Codex.
 
 L'abstention complète utilise une phrase canonique afin d'être mesurable sans juge LLM. Les hallucinations ne sont volontairement pas notées automatiquement par `eval-answer` : une revue humaine ou un protocole de juge distinct et validé reste nécessaire avant de publier un taux d'hallucination. Le CI/CD de déploiement continue donc d'exécuter uniquement l'évaluation retrieval, déterministe et rapide.
+
+## Performance du chat
+
+Le retrieval FTS5 est déjà très rapide : la baseline locale à K=5 reste autour de 22 ms de moyenne. Les mesures détaillées montrent que la latence de plusieurs secondes provient presque entièrement de Codex ; le démarrage local du sous-processus ne représente qu'environ 8 à 12 ms sur les appels instrumentés. Le backend journalise donc les temps par phase et les métriques de tokens plutôt que d'optimiser FTS5 sans preuve.
+
+L'interface SSE affiche désormais des états réels pendant l'attente : recherche documentaire, puis génération. Le texte Codex peut encore apparaître en un bloc final car `codex exec --json` ne fournit pas ici de deltas texte token-par-token. Le prompt privilégie une réponse concise et directe ; après ce changement, les contrats Acceptance, Support et Actualités conservent 100 % de couverture des groupes documentaires attendus, et Acceptance conserve 100 % d'abstention, de faits obligatoires et de chemins de menus. Les variantes `reasoning=low` / `model_verbosity=low` testées n'ont pas été retenues comme valeurs par défaut.
 
 ## Structure
 

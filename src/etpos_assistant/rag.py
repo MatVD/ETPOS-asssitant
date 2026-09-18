@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -16,6 +18,7 @@ from .vocabulary import analyze_query, normalize_domain_text
 
 CITATION_RE = re.compile(r"\[S(\d+)\]")
 ABSTENTION = ABSTENTION_TEXT
+logger = logging.getLogger(__name__)
 
 
 def get_provider():
@@ -41,6 +44,19 @@ def _history_for_prompt(history: list[dict[str, str]]) -> list[dict[str, str]]:
             content = CITATION_RE.sub("", content)
         sanitized.append({"role": item["role"], "content": content})
     return sanitized
+
+
+def _history_before_current_question(
+    history: list[dict[str, str]],
+    question: str,
+) -> list[dict[str, str]]:
+    if (
+        history
+        and history[-1]["role"] == "user"
+        and history[-1]["content"].strip() == question.strip()
+    ):
+        return history[:-1]
+    return history
 
 
 def _retrieval_question(question: str, history: list[dict[str, str]]) -> str:
@@ -119,9 +135,37 @@ def finalize_answer(raw_answer: str, sections: list[RetrievedSection]) -> tuple[
 
 
 async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict]:
-    history = _history(conversation_id)
-    sections = search_sections(_retrieval_question(question, history), limit=6)
+    total_started = time.perf_counter()
+    history = _history_before_current_question(_history(conversation_id), question)
+    retrieval_question = _retrieval_question(question, history)
+
+    yield {
+        "type": "status",
+        "stage": "searching",
+        "text": "Recherche dans la documentation ETPOS…",
+    }
+    retrieval_started = time.perf_counter()
+    sections = search_sections(retrieval_question, limit=settings.retrieval_limit)
+    retrieval_latency_ms = (time.perf_counter() - retrieval_started) * 1000.0
+
     if not sections:
+        total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+        logger.info(
+            "chat_performance %s",
+            json.dumps(
+                {
+                    "conversation_id": conversation_id,
+                    "retrieval_latency_ms": round(retrieval_latency_ms, 3),
+                    "generation_latency_ms": 0.0,
+                    "total_latency_ms": round(total_latency_ms, 3),
+                    "source_count": 0,
+                    "question_chars": len(question),
+                    "retrieval_question_chars": len(retrieval_question),
+                    "answer_chars": len(ABSTENTION),
+                },
+                ensure_ascii=False,
+            ),
+        )
         yield {"type": "delta", "text": ABSTENTION}
         yield {
             "type": "done",
@@ -136,27 +180,60 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
             source_id=f"S{i + 1}",
             title=section.title,
             heading_path=section.heading_path,
-            text=section.source_text[:9000],
+            text=section.source_text[: settings.source_char_limit],
         )
         for i, section in enumerate(sections)
     ]
+    prompt_history = _history_for_prompt(history)
+    yield {
+        "type": "status",
+        "stage": "generating",
+        "text": "Sources trouvées. Génération de la réponse…",
+    }
+
     provider = get_provider()
     chunks: list[str] = []
+    generation_started = time.perf_counter()
     async for chunk in provider.stream_answer(
         question=question,
         sources=contexts,
-        history=_history_for_prompt(history),
+        history=prompt_history,
     ):
         chunks.append(chunk)
         if sum(len(part) for part in chunks) > 40000:
             break
         yield {"type": "delta", "text": chunk}
+    generation_latency_ms = (time.perf_counter() - generation_started) * 1000.0
 
+    finalization_started = time.perf_counter()
     answer, citations = finalize_answer("".join(chunks), sections)
+    html = render_safe_markdown(answer)
+    finalization_latency_ms = (time.perf_counter() - finalization_started) * 1000.0
+    total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+
+    performance = {
+        "conversation_id": conversation_id,
+        "retrieval_latency_ms": round(retrieval_latency_ms, 3),
+        "generation_latency_ms": round(generation_latency_ms, 3),
+        "finalization_latency_ms": round(finalization_latency_ms, 3),
+        "total_latency_ms": round(total_latency_ms, 3),
+        "source_count": len(sections),
+        "source_chars": sum(len(context.text) for context in contexts),
+        "history_messages": len(prompt_history),
+        "history_chars": sum(len(item["content"]) for item in prompt_history),
+        "question_chars": len(question),
+        "retrieval_question_chars": len(retrieval_question),
+        "answer_chars": len(answer),
+    }
+    provider_metrics = getattr(provider, "last_metrics", None)
+    if provider_metrics is not None and hasattr(provider_metrics, "as_dict"):
+        performance["codex"] = provider_metrics.as_dict()
+    logger.info("chat_performance %s", json.dumps(performance, ensure_ascii=False))
+
     yield {
         "type": "done",
         "text": answer,
-        "html": render_safe_markdown(answer),
+        "html": html,
         "citations": citations,
     }
 

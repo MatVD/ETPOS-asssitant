@@ -324,6 +324,12 @@ def test_answer_result_to_dict_keeps_review_evidence():
         retrieval_latency_ms=5.0,
         generation_latency_ms=25.0,
         total_latency_ms=30.0,
+        provider_metrics={
+            "input_tokens": 100,
+            "cached_input_tokens": 80,
+            "output_tokens": 20,
+            "reasoning_output_tokens": 5,
+        },
     )
 
     payload = answer_result_to_dict(score_answer_case(case, generated))
@@ -333,6 +339,7 @@ def test_answer_result_to_dict_keeps_review_evidence():
     assert payload["citations"][0]["section_id"] == 10
     assert payload["retrieved_sections"][0]["heading_path"] == "CONFIGURER ETPOS > Types de Règlement"
     assert payload["total_latency_ms"] == 30.0
+    assert payload["provider_metrics"]["cached_input_tokens"] == 80
 
 
 def test_answer_scoring_detects_irrelevant_citation():

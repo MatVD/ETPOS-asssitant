@@ -470,6 +470,15 @@ def _print_answer_summary(summary: dict, *, include_latency: bool = True) -> Non
             f"Latence réponse complète: moyenne {summary['latency_mean_ms']:.0f}ms, "
             f"p95 {summary['latency_p95_ms']:.0f}ms"
         )
+        usage = summary.get("provider_usage")
+        if isinstance(usage, dict):
+            print(
+                "Tokens Codex: "
+                f"entrée={usage['input_tokens_total']} "
+                f"cache={usage['cached_input_tokens_total']} "
+                f"sortie={usage['output_tokens_total']} "
+                f"raisonnement={usage['reasoning_output_tokens_total']}"
+            )
 
 
 async def _run_eval_answer(args) -> None:
@@ -539,9 +548,12 @@ async def _run_eval_answer(args) -> None:
             "benchmark_path": str(path),
             "provider": settings.provider,
             "model": settings.codex_model or None,
+            "reasoning_effort": settings.codex_reasoning_effort or None,
+            "model_verbosity": settings.codex_model_verbosity or None,
             "git_sha": git_sha,
             "docs_db": str(docs_path) if docs_path is not None else str(settings.docs_db),
             "limit": args.limit,
+            "source_char_limit": settings.source_char_limit,
             "summary": summary,
             "cases": [answer_result_to_dict(result) for result in results],
         }

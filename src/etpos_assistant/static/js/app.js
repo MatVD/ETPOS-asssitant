@@ -88,14 +88,23 @@
         if (event.type === "meta") {
           main.dataset.conversationId = String(event.conversation_id);
           if (location.pathname === "/") history.replaceState({}, "", `/c/${event.conversation_id}`);
+        } else if (event.type === "status") {
+          assistant.paragraph.textContent = event.text || "";
+          assistant.paragraph.classList.add("message-status");
         } else if (event.type === "delta") {
+          if (assistant.paragraph.classList.contains("message-status")) {
+            assistant.paragraph.classList.remove("message-status");
+            assistant.paragraph.textContent = "";
+          }
           accumulated += event.text || "";
           assistant.paragraph.textContent = accumulated;
           assistant.article.scrollIntoView({ behavior: "smooth", block: "end" });
         } else if (event.type === "done") {
+          assistant.paragraph.classList.remove("message-status");
           assistant.body.innerHTML = event.html || "";
           renderCitations(assistant.article, event.citations || []);
         } else if (event.type === "error") {
+          assistant.paragraph.classList.remove("message-status");
           assistant.paragraph.textContent = event.message || "Erreur de génération.";
           assistant.article.classList.add("error");
         }

@@ -51,6 +51,7 @@ button { cursor: pointer; }
 .message-body { line-height: 1.68; color: #243247; overflow-wrap: anywhere; }
 .message-body p:first-child { margin-top: 0; }
 .message-body p:last-child { margin-bottom: 0; }
+.message-status { color: #687386; font-style: italic; }
 .message-body pre { overflow-x: auto; background: #17202e; color: #eef2f7; padding: .9rem; border-radius: .7rem; }
 .message-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 .citations { display: grid; gap: .5rem; margin-top: 1rem; }
@@ -93,6 +94,7 @@ button { cursor: pointer; }
   .chat-header h1, .empty-state h2, .message-body, .source-text { color: #e9edf3; }
   .status-badge, .metadata-grid { background: #121b26; border-color: #2a3748; }
   .message { border-color: #273446; }
+  .message-status { color: #9aa8b9; }
   .message.user .message-body { background: #202d3e; }
   .composer textarea { color: #e9edf3; }
   .citation-card strong { color: #d5deea; }
