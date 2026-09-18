@@ -466,6 +466,11 @@ def _print_answer_summary(summary: dict, *, include_latency: bool = True) -> Non
         f"Part des citations dans les passages attendus: {_pct(summary['citation_relevance'])} "
         f"({summary['relevant_citations']}/{summary['citations']})"
     )
+    print(
+        f"Couverture des faits/chemins présents par les citations: "
+        f"{_pct(summary['citation_evidence_coverage'])} "
+        f"({summary['supported_evidence_items']}/{summary['matched_evidence_items']})"
+    )
     if include_latency:
         print(
             f"Latence réponse complète: moyenne {summary['latency_mean_ms']:.0f}ms, "
@@ -601,6 +606,10 @@ def cmd_rescore_answer_report(args) -> None:
         if not result.abstention_correct
         or (result.expected_facts and result.matched_facts < result.expected_facts)
         or (result.expected_menu_paths and result.matched_menu_paths < result.expected_menu_paths)
+        or (
+            result.matched_evidence_items
+            and result.supported_evidence_items < result.matched_evidence_items
+        )
         or not result.citation_presence_correct
     ]
     if review:
@@ -613,7 +622,8 @@ def cmd_rescore_answer_report(args) -> None:
                 f"faits={result.matched_facts}/{result.expected_facts} "
                 f"menus={result.matched_menu_paths}/{result.expected_menu_paths} "
                 f"citations={'ok' if result.citation_presence_correct else 'ko'} "
-                f"passages={result.relevant_citations}/{result.total_citations}"
+                f"passages={result.relevant_citations}/{result.total_citations} "
+                f"preuves={result.supported_evidence_items}/{result.matched_evidence_items}"
             )
 
 

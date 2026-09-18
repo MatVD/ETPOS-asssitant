@@ -198,6 +198,7 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
     assert answer_result.citation_presence_correct
     assert answer_result.citation_relevance == 1.0
     assert answer_result.citation_expected_coverage == 1.0
+    assert answer_result.citation_evidence_coverage == 1.0
 
     unanswerable = evaluation.BenchmarkCase(
         case_id="none",
@@ -225,7 +226,38 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
     assert summary["citation_presence_accuracy"] == 1.0
     assert summary["citation_relevance"] == 1.0
     assert summary["citation_expected_coverage"] == 1.0
+    assert summary["citation_evidence_coverage"] == 1.0
     assert summary["latency_p95_ms"] == 30.0
+
+
+def test_answer_scoring_accepts_fact_variants_without_requiring_exact_word_order():
+    relevant = _section(
+        29,
+        "Étiquettes",
+        "GESTION DES ARTICLES > Étiquettes",
+        "ETPOS permet l'impression manuelle ou automatique des étiquettes.",
+    )
+    case = evaluation.BenchmarkCase(
+        case_id="labels-variants",
+        category="source_contract",
+        question="Peut-on imprimer des étiquettes automatiquement ?",
+        answerability="full",
+        relevant_section_groups=(("étiquettes",),),
+        required_fact_groups=(("impression manuelle ou automatique",),),
+    )
+    generated = GeneratedAnswer(
+        text="Les étiquettes peuvent être imprimées automatiquement ou manuellement. [S1]",
+        citations=({"source_id": "S1", "section_id": 29},),
+        sections=(relevant,),
+        retrieval_latency_ms=1.0,
+        generation_latency_ms=2.0,
+        total_latency_ms=3.0,
+    )
+
+    result = score_answer_case(case, generated)
+
+    assert result.fact_coverage == 1.0
+    assert result.citation_evidence_coverage == 1.0
 
 
 def test_answer_scoring_accepts_fact_alternatives_and_ordered_menu_segments():
@@ -339,7 +371,82 @@ def test_answer_result_to_dict_keeps_review_evidence():
     assert payload["citations"][0]["section_id"] == 10
     assert payload["retrieved_sections"][0]["heading_path"] == "CONFIGURER ETPOS > Types de Règlement"
     assert payload["total_latency_ms"] == 30.0
+    assert payload["citation_evidence_coverage"] is None
     assert payload["provider_metrics"]["cached_input_tokens"] == 80
+
+
+def test_answer_scoring_accepts_menu_evidence_split_across_cited_sections():
+    parent = _section(
+        17,
+        "Sauvegarde",
+        "SÉCURITÉ ET FIABILITÉ > Sauvegarde",
+        "Cette fonctionnalité se trouve dans Système + Sauvegarde.",
+    )
+    procedure = _section(
+        19,
+        "Éffectuer la sauvegarde",
+        "SÉCURITÉ ET FIABILITÉ > Sauvegarde > Éffectuer la sauvegarde",
+        "Pour effectuer une sauvegarde, accédez à l'onglet Exporter.",
+    )
+    case = evaluation.BenchmarkCase(
+        case_id="backup-split-evidence",
+        category="menu_path",
+        question="Où sauvegarder ?",
+        answerability="full",
+        relevant_section_groups=(("sauvegarde",),),
+        expected_menu_paths=("Système > Sauvegarde > Exporter",),
+    )
+    generated = GeneratedAnswer(
+        text="Allez dans Système > Sauvegarde > Exporter. [S1] [S2]",
+        citations=(
+            {"source_id": "S1", "section_id": 17},
+            {"source_id": "S2", "section_id": 19},
+        ),
+        sections=(parent, procedure),
+        retrieval_latency_ms=2.0,
+        generation_latency_ms=3.0,
+        total_latency_ms=5.0,
+    )
+
+    result = score_answer_case(case, generated)
+
+    assert result.menu_path_coverage == 1.0
+    assert result.citation_evidence_coverage == 1.0
+
+
+def test_answer_scoring_reports_when_citations_do_not_support_matched_evidence():
+    relevant = _section(
+        19,
+        "Sauvegarde",
+        "SÉCURITÉ ET FIABILITÉ > Sauvegarde",
+        "La sauvegarde est disponible dans Système > Sauvegarde > Exporter.",
+    )
+    unrelated = _section(18, "Rapports", "RAPPORTS ET GRAPHIQUES", "Rapports généraux.")
+    case = evaluation.BenchmarkCase(
+        case_id="backup-evidence",
+        category="menu_path",
+        question="Où sauvegarder ?",
+        answerability="full",
+        relevant_section_groups=(("sauvegarde",),),
+        expected_menu_paths=("Système > Sauvegarde > Exporter",),
+        required_facts=("sauvegarde",),
+    )
+    generated = GeneratedAnswer(
+        text="Utilisez Système > Sauvegarde > Exporter pour la sauvegarde. [S2]",
+        citations=({"source_id": "S2", "section_id": 18},),
+        sections=(relevant, unrelated),
+        retrieval_latency_ms=2.0,
+        generation_latency_ms=3.0,
+        total_latency_ms=5.0,
+    )
+
+    result = score_answer_case(case, generated)
+
+    assert result.fact_coverage == 1.0
+    assert result.menu_path_coverage == 1.0
+    assert result.matched_evidence_items == 2
+    assert result.supported_evidence_items == 0
+    assert result.citation_evidence_coverage == 0.0
 
 
 def test_answer_scoring_detects_irrelevant_citation():
@@ -458,3 +565,4 @@ def test_rescore_answer_report_reuses_saved_answers_without_provider(tmp_path):
     assert summary["citation_presence_accuracy"] == 1.0
     assert summary["citation_relevance"] == 1.0
     assert summary["citation_expected_coverage"] == 1.0
+    assert summary["citation_evidence_coverage"] == 0.0

@@ -17,6 +17,11 @@ from .vocabulary import normalize_domain_text
 
 ANSWERABILITY_VALUES = {"full", "partial", "none"}
 
+FACT_STOPWORDS = {
+    "a", "au", "aux", "avec", "ce", "ces", "dans", "de", "des", "du", "en", "et",
+    "est", "la", "le", "les", "ou", "par", "pour", "sur", "un", "une", "vers",
+}
+
 
 class BenchmarkError(ValueError):
     pass
@@ -86,6 +91,8 @@ class AnswerCaseResult:
     total_citations: int
     matched_citation_groups: int
     expected_citation_groups: int
+    matched_evidence_items: int
+    supported_evidence_items: int
     citation_presence_correct: bool
 
     @property
@@ -111,6 +118,12 @@ class AnswerCaseResult:
         if not self.expected_citation_groups:
             return None
         return self.matched_citation_groups / self.expected_citation_groups
+
+    @property
+    def citation_evidence_coverage(self) -> float | None:
+        if not self.matched_evidence_items:
+            return None
+        return self.supported_evidence_items / self.matched_evidence_items
 
 
 def _strings(value: object, field: str, case_id: str) -> tuple[str, ...]:
@@ -434,8 +447,46 @@ async def generate_answer_for_case(
     )
 
 
+def _canonical_fact_token(token: str) -> str:
+    if token.startswith(("imprim", "impress")):
+        return "imprimer"
+    if token.startswith("manuel"):
+        return "manuel"
+    if token.startswith("automati"):
+        return "automatique"
+    if token.startswith(("envoi", "envoy")):
+        return "transmettre"
+    if token.startswith(("transmi", "transmet")):
+        return "transmettre"
+    if token.endswith("ment") and len(token) > 7:
+        token = token[:-4]
+    if token.endswith("s") and len(token) > 4:
+        token = token[:-1]
+    return token
+
+
+def _fact_tokens(value: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    for token in normalize_domain_text(value).split():
+        if token in FACT_STOPWORDS or len(token) < 2:
+            continue
+        token = _canonical_fact_token(token)
+        if token and token not in tokens:
+            tokens.append(token)
+    return tuple(tokens)
+
+
 def _contains_expected(text: str, expected: str) -> bool:
-    return normalize_domain_text(expected) in normalize_domain_text(text)
+    normalized_text = normalize_domain_text(text)
+    normalized_expected = normalize_domain_text(expected)
+    if normalized_expected in normalized_text:
+        return True
+
+    expected_tokens = _fact_tokens(expected)
+    if len(expected_tokens) < 2:
+        return False
+    text_tokens = set(_fact_tokens(text))
+    return all(token in text_tokens for token in expected_tokens)
 
 
 def _effective_groups(
@@ -467,20 +518,52 @@ def _is_abstention(text: str) -> bool:
     return normalize_domain_text(text) == normalize_domain_text(ABSTENTION)
 
 
+def _section_evidence_text(section: RetrievedSection) -> str:
+    return f"{section.title}\n{section.heading_path}\n{section.source_text}"
+
+
+def _evidence_supported_by_citation(
+    sections: tuple[RetrievedSection, ...],
+    alternatives: tuple[str, ...],
+    matcher,
+) -> bool:
+    return any(
+        any(matcher(_section_evidence_text(section), alternative) for alternative in alternatives)
+        for section in sections
+    )
+
+
+def _menu_evidence_supported_by_citations(
+    sections: tuple[RetrievedSection, ...],
+    alternatives: tuple[str, ...],
+) -> bool:
+    evidence = "\n".join(_section_evidence_text(section) for section in sections)
+    for alternative in alternatives:
+        raw_segments = re.split(r"\s*(?:>|→|\+)\s*", alternative)
+        segments = [segment for segment in raw_segments if normalize_domain_text(segment)]
+        if segments and all(_contains_expected(evidence, segment) for segment in segments):
+            return True
+    return False
+
+
 def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCaseResult:
     is_abstention = _is_abstention(answer.text)
     abstention_correct = is_abstention if case.answerability == "none" else not is_abstention
 
     fact_groups = _effective_groups(case.required_facts, case.required_fact_groups)
     menu_path_groups = _effective_groups(case.expected_menu_paths, case.expected_menu_path_groups)
-    matched_facts = sum(
-        any(_contains_expected(answer.text, alternative) for alternative in alternatives)
+    matched_fact_groups = tuple(
+        alternatives
         for alternatives in fact_groups
+        if any(_contains_expected(answer.text, alternative) for alternative in alternatives)
     )
-    matched_menu_paths = sum(
-        any(_contains_menu_path(answer.text, alternative) for alternative in alternatives)
+    matched_menu_path_groups = tuple(
+        alternatives
         for alternatives in menu_path_groups
+        if any(_contains_menu_path(answer.text, alternative) for alternative in alternatives)
     )
+    matched_facts = len(matched_fact_groups)
+    matched_menu_paths = len(matched_menu_path_groups)
 
     relevant_section_ids = {
         section.id
@@ -498,6 +581,17 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
         any(section.id in cited_section_ids and _matches_group(section, group) for section in answer.sections)
         for group in case.relevant_section_groups
     )
+    cited_sections = tuple(section for section in answer.sections if section.id in cited_section_ids)
+    supported_fact_items = sum(
+        _evidence_supported_by_citation(cited_sections, alternatives, _contains_expected)
+        for alternatives in matched_fact_groups
+    )
+    supported_menu_items = sum(
+        _menu_evidence_supported_by_citations(cited_sections, alternatives)
+        for alternatives in matched_menu_path_groups
+    )
+    matched_evidence_items = len(matched_fact_groups) + len(matched_menu_path_groups)
+    supported_evidence_items = supported_fact_items + supported_menu_items
     citation_presence_correct = (
         total_citations == 0 if case.answerability == "none" else total_citations > 0
     )
@@ -514,6 +608,8 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
         total_citations=total_citations,
         matched_citation_groups=matched_citation_groups,
         expected_citation_groups=len(case.relevant_section_groups),
+        matched_evidence_items=matched_evidence_items,
+        supported_evidence_items=supported_evidence_items,
         citation_presence_correct=citation_presence_correct,
     )
 
@@ -534,6 +630,9 @@ def answer_result_to_dict(result: AnswerCaseResult) -> dict:
         "total_citations": result.total_citations,
         "matched_citation_groups": result.matched_citation_groups,
         "expected_citation_groups": result.expected_citation_groups,
+        "matched_evidence_items": result.matched_evidence_items,
+        "supported_evidence_items": result.supported_evidence_items,
+        "citation_evidence_coverage": result.citation_evidence_coverage,
         "citation_presence_correct": result.citation_presence_correct,
         "retrieval_latency_ms": result.answer.retrieval_latency_ms,
         "generation_latency_ms": result.answer.generation_latency_ms,
@@ -566,6 +665,8 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
     relevant_citations = sum(result.relevant_citations for result in results)
     citation_group_total = sum(result.expected_citation_groups for result in results)
     citation_group_matches = sum(result.matched_citation_groups for result in results)
+    matched_evidence_items = sum(result.matched_evidence_items for result in results)
+    supported_evidence_items = sum(result.supported_evidence_items for result in results)
     latencies = [result.answer.total_latency_ms for result in results]
     provider_metrics = [
         result.answer.provider_metrics
@@ -610,6 +711,11 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
         ),
         "matched_citation_groups": citation_group_matches,
         "expected_citation_groups": citation_group_total,
+        "citation_evidence_coverage": (
+            supported_evidence_items / matched_evidence_items if matched_evidence_items else None
+        ),
+        "matched_evidence_items": matched_evidence_items,
+        "supported_evidence_items": supported_evidence_items,
         "relevant_citations": relevant_citations,
         "citations": cited_total,
         "latency_mean_ms": sum(latencies) / len(latencies) if latencies else 0.0,
