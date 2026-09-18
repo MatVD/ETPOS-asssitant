@@ -10,7 +10,13 @@ from pathlib import Path
 
 from .config import settings
 from .providers import SourceContext
-from .rag import ABSTENTION, finalize_answer, get_provider
+from .rag import (
+    ABSTENTION,
+    _history_for_prompt,
+    _retrieval_question,
+    finalize_answer,
+    get_provider,
+)
 from .retrieval import RetrievedSection, search_sections
 from .vocabulary import normalize_domain_text
 
@@ -39,6 +45,7 @@ class BenchmarkCase:
     expected_menu_path_groups: tuple[tuple[str, ...], ...] = ()
     required_facts: tuple[str, ...] = ()
     required_fact_groups: tuple[tuple[str, ...], ...] = ()
+    history: tuple[dict[str, str], ...] = ()
     notes: str = ""
 
 
@@ -155,6 +162,27 @@ def _groups(value: object, case_id: str) -> tuple[tuple[str, ...], ...]:
     return _string_groups(value, "relevant_section_groups", case_id)
 
 
+def _history_messages(value: object, case_id: str) -> tuple[dict[str, str], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise BenchmarkError(f"{case_id}: history doit être une liste")
+    messages: list[dict[str, str]] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise BenchmarkError(f"{case_id}: history[{index}] doit être un objet")
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"}:
+            raise BenchmarkError(
+                f"{case_id}: history[{index}].role doit valoir user ou assistant"
+            )
+        if not content:
+            raise BenchmarkError(f"{case_id}: history[{index}].content est vide")
+        messages.append({"role": role, "content": content})
+    return tuple(messages)
+
+
 def _case_from_dict(item: dict, line_number: int) -> BenchmarkCase:
     case_id = str(item.get("id") or f"line-{line_number}").strip()
     question = str(item.get("question") or "").strip()
@@ -213,6 +241,7 @@ def _case_from_dict(item: dict, line_number: int) -> BenchmarkCase:
         expected_menu_path_groups=expected_menu_path_groups,
         required_facts=required_facts,
         required_fact_groups=required_fact_groups,
+        history=_history_messages(item.get("history"), case_id),
         notes=str(item.get("notes") or "").strip(),
     )
 
@@ -257,7 +286,8 @@ def evaluate_retrieval_case(
     db_path: Path | None = None,
 ) -> RetrievalCaseResult:
     started = time.perf_counter()
-    rows = search_sections(case.question, limit=limit, db_path=db_path)
+    retrieval_question = _retrieval_question(case.question, list(case.history))
+    rows = search_sections(retrieval_question, limit=limit, db_path=db_path)
     latency_ms = (time.perf_counter() - started) * 1000.0
 
     if case.answerability == "none":
@@ -391,7 +421,9 @@ async def generate_answer_for_case(
 ) -> GeneratedAnswer:
     total_started = time.perf_counter()
     retrieval_started = time.perf_counter()
-    sections = search_sections(case.question, limit=limit, db_path=db_path)
+    history = list(case.history)
+    retrieval_question = _retrieval_question(case.question, history)
+    sections = search_sections(retrieval_question, limit=limit, db_path=db_path)
     retrieval_latency_ms = (time.perf_counter() - retrieval_started) * 1000.0
 
     if not sections:
@@ -420,7 +452,7 @@ async def generate_answer_for_case(
     async for chunk in provider.stream_answer(
         question=case.question,
         sources=contexts,
-        history=[],
+        history=_history_for_prompt(history),
     ):
         chunks.append(chunk)
         if sum(len(part) for part in chunks) > 40000:
@@ -620,6 +652,7 @@ def answer_result_to_dict(result: AnswerCaseResult) -> dict:
         "category": result.case.category,
         "question": result.case.question,
         "answerability": result.case.answerability,
+        "history": list(result.case.history),
         "answer": result.answer.text,
         "abstention_correct": result.abstention_correct,
         "matched_facts": result.matched_facts,

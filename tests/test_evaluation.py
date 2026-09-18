@@ -49,6 +49,10 @@ def test_load_benchmark_supports_rich_schema_and_legacy_fields(tmp_path):
             "expected_heading_paths": ["CONFIGURER ETPOS > Types de Règlement"],
             "expected_menu_paths": ["Système > Configurations > Types de règlement"],
             "required_facts": ["Système + Configurations"],
+            "history": [
+                {"role": "user", "content": "Comment gérer les règlements ?"},
+                {"role": "assistant", "content": "Réponse précédente [S1]"},
+            ],
         },
         {
             "question": "Ancien format ?",
@@ -70,6 +74,7 @@ def test_load_benchmark_supports_rich_schema_and_legacy_fields(tmp_path):
     assert [case.case_id for case in cases] == ["rich", "line-2", "none"]
     assert cases[0].expected_heading_paths == ("CONFIGURER ETPOS > Types de Règlement",)
     assert cases[0].expected_menu_paths == ("Système > Configurations > Types de règlement",)
+    assert cases[0].history[0]["content"] == "Comment gérer les règlements ?"
     assert cases[1].relevant_section_groups == (("sauvegarde",),)
     assert cases[2].answerability == "none"
 
@@ -93,6 +98,25 @@ def test_project_benchmark_covers_required_categories():
     assert sum(case.answerability == "none" for case in cases) >= 3
     assert any(case.expected_menu_paths or case.expected_menu_path_groups for case in cases)
     assert any(case.required_facts or case.required_fact_groups for case in cases)
+
+
+def test_load_benchmark_rejects_invalid_history_role(tmp_path):
+    path = tmp_path / "invalid-history.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "id": "bad-history",
+                "question": "Question",
+                "answerability": "full",
+                "relevant_section_groups": [["sauvegarde"]],
+                "history": [{"role": "system", "content": "Interdit"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BenchmarkError, match="history.*role"):
+        load_benchmark(path)
 
 
 def test_load_benchmark_rejects_answerable_case_without_expected_section(tmp_path):
@@ -162,6 +186,81 @@ def test_retrieval_evaluation_matches_normalized_groups_and_summarizes(monkeypat
     assert summary["recall_at_k"] == 1.0
     assert summary["mrr"] == pytest.approx(0.75)
     assert summary["group_coverage"] == 1.0
+
+
+def test_retrieval_evaluation_uses_history_for_contextual_follow_up(monkeypatch):
+    case = evaluation.BenchmarkCase(
+        case_id="follow-up",
+        category="follow_up",
+        question="Et pour le supprimer ?",
+        answerability="full",
+        relevant_section_groups=(("définir les permissions",),),
+        history=(
+            {"role": "user", "content": "Comment gérer les utilisateurs ?"},
+            {"role": "assistant", "content": "Réponse précédente [S1]"},
+        ),
+    )
+    seen: list[str] = []
+
+    def fake_search(question, limit, db_path=None):
+        seen.append(question)
+        return [_section(7, "Définir les permissions", "GESTION DES UTILISATEURS > Définir les permissions")]
+
+    monkeypatch.setattr(evaluation, "search_sections", fake_search)
+
+    result = evaluate_retrieval_case(case, 5)
+
+    assert result.hit
+    assert seen == ["Comment gérer les utilisateurs ? Et pour le supprimer ?"]
+
+
+@pytest.mark.asyncio
+async def test_generate_answer_for_case_reuses_production_history_behavior(monkeypatch):
+    case = evaluation.BenchmarkCase(
+        case_id="follow-up-answer",
+        category="follow_up",
+        question="Et pour la restaurer ?",
+        answerability="full",
+        relevant_section_groups=(("restaurer une sauvegarde",),),
+        history=(
+            {"role": "user", "content": "Comment faire une sauvegarde ?"},
+            {"role": "assistant", "content": "Utilisez Sauvegarde. [S1]"},
+        ),
+    )
+    section = _section(
+        8,
+        "Restaurer une sauvegarde",
+        "SÉCURITÉ ET FIABILITÉ > Sauvegarde > Restaurer une sauvegarde",
+        "Pour restaurer une sauvegarde, accédez à l'onglet Restaurer.",
+    )
+    seen_queries: list[str] = []
+    seen_histories: list[list[dict[str, str]]] = []
+
+    class FakeProvider:
+        last_metrics = None
+
+        async def stream_answer(self, *, question, sources, history):
+            assert question == "Et pour la restaurer ?"
+            assert sources[0].title == "Restaurer une sauvegarde"
+            seen_histories.append(history)
+            yield "Utilisez l'onglet Restaurer. [S1]"
+
+    def fake_search(question, limit, db_path=None):
+        seen_queries.append(question)
+        return [section]
+
+    monkeypatch.setattr(evaluation, "search_sections", fake_search)
+    monkeypatch.setattr(evaluation, "get_provider", FakeProvider)
+
+    generated = await evaluation.generate_answer_for_case(case, limit=5)
+
+    assert seen_queries == ["Comment faire une sauvegarde ? Et pour la restaurer ?"]
+    assert seen_histories == [[
+        {"role": "user", "content": "Comment faire une sauvegarde ?"},
+        {"role": "assistant", "content": "Utilisez Sauvegarde. "},
+    ]]
+    assert generated.text == "Utilisez l'onglet Restaurer. [S1]"
+    assert generated.citations[0]["section_id"] == 8
 
 
 def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
@@ -310,6 +409,35 @@ def test_load_benchmark_rejects_legacy_and_grouped_expectations_together(tmp_pat
 
     with pytest.raises(BenchmarkError, match="required_facts ou required_fact_groups"):
         load_benchmark(path)
+
+
+def test_challenge_benchmark_expands_realistic_held_out_coverage():
+    root = Path(__file__).resolve().parents[1]
+    cases = load_benchmark(root / "eval" / "challenge.jsonl")
+
+    assert len(cases) == 45
+    assert {case.category for case in cases} >= {
+        "natural",
+        "typo",
+        "shorthand",
+        "multi_intent",
+        "ambiguous_realistic",
+        "follow_up",
+        "partial_realistic",
+        "unanswerable_realistic",
+    }
+    assert sum(bool(case.history) for case in cases) == 4
+    assert sum(case.answerability == "none" for case in cases) == 4
+    assert sum(case.answerability == "partial" for case in cases) >= 5
+
+    managed_paths = (
+        "benchmark.jsonl",
+        "acceptance.jsonl",
+        "support.jsonl",
+        "news.jsonl",
+        "challenge.jsonl",
+    )
+    assert sum(len(load_benchmark(root / "eval" / name)) for name in managed_paths) == 120
 
 
 def test_acceptance_benchmark_is_separate_and_covers_risk_categories():
