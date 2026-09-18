@@ -116,7 +116,7 @@ sudo -u etpos-assistant \
 
 L'authentification doit être faite une fois avant de lancer le service. Aucun `OPENAI_API_KEY` n'est nécessaire.
 
-Pour activer App Server en production, utiliser un répertoire d'authentification **dédié** au transport ETPOS, sans configuration utilisateur, règles, skills ou plugins :
+Pour activer App Server en production, utiliser un `CODEX_HOME` **dédié** au transport ETPOS. Ce répertoire est ensuite géré directement par Codex, qui peut y créer ses skills système, caches, bases d'état, logs, snapshots et autres fichiers runtime :
 
 ```bash
 ETPOS_CODEX_TRANSPORT=app-server

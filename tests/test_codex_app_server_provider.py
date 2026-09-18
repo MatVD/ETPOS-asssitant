@@ -38,17 +38,24 @@ def test_prepare_isolated_codex_home_copies_only_auth(tmp_path: Path):
     assert stat.S_IMODE((target / "auth.json").stat().st_mode) == 0o600
 
 
-def test_validate_dedicated_codex_home_rejects_runtime_configuration(tmp_path: Path):
+def test_validate_dedicated_codex_home_allows_codex_runtime_state(tmp_path: Path):
     (tmp_path / "auth.json").write_text('{"token":"secret"}', encoding="utf-8")
+    (tmp_path / "config.toml").write_text('model="gpt-5.6-sol"', encoding="utf-8")
+    skills = tmp_path / "skills" / ".system" / "openai-docs"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text("system skill", encoding="utf-8")
+    (tmp_path / "state_5.sqlite").write_bytes(b"runtime-state")
+
     _validate_dedicated_codex_home(tmp_path)
 
-    (tmp_path / "config.toml").write_text('model="x"', encoding="utf-8")
+
+def test_validate_dedicated_codex_home_requires_authentication(tmp_path: Path):
     try:
         _validate_dedicated_codex_home(tmp_path)
     except RuntimeError as exc:
-        assert "config.toml" in str(exc)
+        assert "Authentification Codex App Server introuvable" in str(exc)
     else:
-        raise AssertionError("A dedicated App Server home must reject config.toml")
+        raise AssertionError("A dedicated App Server home must contain auth.json")
 
 
 def test_token_metrics_uses_last_turn_usage():

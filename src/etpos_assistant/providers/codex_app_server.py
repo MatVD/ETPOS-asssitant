@@ -55,15 +55,6 @@ _DISABLED_FEATURES = (
     "workspace_dependencies",
 )
 
-_FORBIDDEN_DEDICATED_HOME_ENTRIES = (
-    "config.toml",
-    "AGENTS.md",
-    "rules",
-    "skills",
-    "plugins",
-)
-
-
 def _app_server_command() -> list[str]:
     command = [
         settings.codex_binary,
@@ -85,17 +76,12 @@ def _app_server_command() -> list[str]:
 
 
 def _validate_dedicated_codex_home(home: Path) -> None:
+    if not home.is_dir():
+        raise RuntimeError(f"CODEX_HOME App Server introuvable : {home}")
     if not (home / "auth.json").is_file():
         raise RuntimeError(
             f"Authentification Codex App Server introuvable dans {home}. "
             "Authentifie directement ce répertoire avec CODEX_HOME=<chemin> codex login."
-        )
-    forbidden = [name for name in _FORBIDDEN_DEDICATED_HOME_ENTRIES if (home / name).exists()]
-    if forbidden:
-        raise RuntimeError(
-            "Le CODEX_HOME dédié à ETPOS contient une configuration interdite : "
-            + ", ".join(forbidden)
-            + ". Utilise un répertoire dédié contenant l'authentification, sans config/rules/skills/plugins."
         )
 
 
