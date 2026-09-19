@@ -37,7 +37,7 @@ Le processus App Server peut rester chaud au niveau du worker FastAPI, mais chaq
 - recherche Web désactivée ;
 - fonctions shell, navigateur, computer use, plugins, skills et autres capacités non textuelles désactivées au démarrage ;
 - configuration MCP locale neutralisée par `mcp_servers={}` et fonctionnalités MCP/elicitation associées désactivées ;
-- `dynamicTools=[]`, environnements, racines runtime et capability roots explicitement vides au démarrage du thread ;
+- les champs App Server expérimentaux `dynamicTools`, `environments`, `runtimeWorkspaceRoots` et `selectedCapabilityRoots` ne sont pas envoyés sans capability `experimentalApi` dédiée ;
 - instructions de base et développeur limitées à un moteur de réponse textuel utilisant uniquement le texte fourni ;
 - refus explicite des demandes d'approbation de commandes ou changements de fichiers ;
 - échec fermé si Codex démarre un type d'item outil inattendu ;

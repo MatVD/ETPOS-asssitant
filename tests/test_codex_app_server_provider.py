@@ -55,10 +55,10 @@ def test_thread_start_params_disable_dynamic_and_environment_capabilities(tmp_pa
     assert params["ephemeral"] is True
     assert params["approvalPolicy"] == "never"
     assert params["sandbox"] == "read-only"
-    assert params["dynamicTools"] == []
-    assert params["environments"] == []
-    assert params["runtimeWorkspaceRoots"] == []
-    assert params["selectedCapabilityRoots"] == []
+    assert "dynamicTools" not in params
+    assert "environments" not in params
+    assert "runtimeWorkspaceRoots" not in params
+    assert "selectedCapabilityRoots" not in params
     assert params["config"]["web_search"] == "disabled"
     assert params["config"]["mcp_servers"] == {}
 

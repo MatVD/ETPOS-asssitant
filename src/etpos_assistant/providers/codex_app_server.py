@@ -70,10 +70,6 @@ def _thread_start_params(workdir: str) -> dict[str, Any]:
         "baseInstructions": _TEXT_ONLY_BASE_INSTRUCTIONS,
         "developerInstructions": _TEXT_ONLY_BASE_INSTRUCTIONS,
         "personality": "none",
-        "dynamicTools": [],
-        "environments": [],
-        "runtimeWorkspaceRoots": [],
-        "selectedCapabilityRoots": [],
         "config": {"web_search": "disabled", "mcp_servers": {}},
     }
     if settings.codex_model:
