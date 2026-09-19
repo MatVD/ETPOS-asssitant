@@ -1,6 +1,9 @@
+import pytest
 from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from etpos_assistant.config import settings
+from etpos_assistant.main import security_headers
 from etpos_assistant.markdown import render_safe_markdown
 from etpos_assistant.security import client_ip, hash_password, same_origin_request, verify_password
 
@@ -48,6 +51,21 @@ def test_client_ip_trusts_x_real_ip_only_from_loopback_proxy():
     )
     assert client_ip(proxied) == "203.0.113.10"
     assert client_ip(direct) == "198.51.100.20"
+
+
+@pytest.mark.asyncio
+async def test_security_headers_match_documented_policy():
+    request = _request(method="GET")
+
+    async def call_next(_request):
+        return PlainTextResponse("ok")
+
+    response = await security_headers(request, call_next)
+
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
 
 def test_same_origin_request_uses_explicit_public_origin_in_production():

@@ -8,9 +8,10 @@ Navigateur
   -> session + CSRF
   -> recherche FTS5/BM25 locale
   -> top 4-6 sections
-  -> CodexCliProvider
-       -> codex exec --ephemeral --json --sandbox read-only
-       -> prompt + sources via stdin
+  -> provider Codex text-only
+       -> exec : codex exec --ephemeral --json --sandbox read-only
+       -> ou app-server : processus chaud + thread ephemeral par question
+       -> prompt + sources sélectionnées uniquement
        -> authentification ChatGPT déjà présente dans CODEX_HOME
   -> SSE vers le navigateur
   -> validation des marqueurs [S1]...[Sn]
@@ -74,14 +75,14 @@ Le projet ne passe pas par l'API OpenAI et ne contient aucun `OPENAI_API_KEY`. C
 
 Deux transports sont disponibles derrière le même contrat provider :
 
-- `exec`, conservé comme valeur par défaut et solution de rollback : un `codex exec --ephemeral --json` isolé est lancé pour chaque tour ;
-- `app-server`, validé pour le vrai streaming : un processus `codex app-server --stdio` persiste au niveau du worker FastAPI, mais chaque question crée un thread Codex `ephemeral` distinct. L'historique métier reste donc exclusivement détenu par `app.db`.
+- `app-server`, transport par défaut et actuellement déployé en production : un processus `codex app-server --stdio` persiste au niveau du worker FastAPI, mais chaque question crée un thread Codex `ephemeral` distinct. L'historique métier reste donc exclusivement détenu par `app.db`. Son statut expérimental côté Codex est un risque connu et accepté tant que les validations réelles restent satisfaisantes ;
+- `exec`, conservé comme solution de rollback immédiat : un `codex exec --ephemeral --json` isolé est lancé pour chaque tour, sans migration de données ni changement du pipeline RAG.
 
 Dans les deux cas, l'historique utile est reconstruit par l'application depuis `app.db` et fourni dans le prompt. La question courante, déjà persistée avant la génération, est retirée de l'historique réinjecté afin de ne pas la dupliquer. Pour les relances courtes, le retrieval peut réutiliser le dernier tour utilisateur pertinent sans second appel LLM. Les anciens marqueurs `[Sx]` sont retirés avant réinjection : seuls les identifiants de sources du tour courant sont citables.
 
 Avec `exec`, le mode JSON expose essentiellement le message assistant terminé : l'interface SSE reçoit donc la réponse en un bloc. Avec `app-server`, le backend consomme `item/agentMessage/delta` uniquement pour l'item `final_answer` et transmet chaque fragment au SSE dès réception. Les raisonnements et autres items ne sont jamais diffusés. Un marqueur interne `full / partial / none`, retiré avant affichage, stabilise la distinction entre réponse complète, réponse partielle et abstention canonique sans coder de réponse métier.
 
-Le transport App Server reste text-only et fail-closed : répertoire de travail temporaire vide, sandbox `read-only`, approbations `never`, web désactivé, fonctions shell/browser/plugins/skills/outils désactivées, environnement réduit et refus de tout item outil inattendu. Le processus est arrêté au shutdown FastAPI et redémarré proprement après erreur, timeout ou annulation. En production, `ETPOS_CODEX_APP_HOME` est obligatoire pour App Server et pointe vers un CODEX_HOME dédié authentifié directement. Son contenu runtime est géré librement par Codex (skills système, caches, bases d'état, logs, snapshots, etc.) ; l'application vérifie seulement que le répertoire existe et contient `auth.json`. Le transport `exec` reste disponible comme rollback immédiat.
+Les deux transports utilisent la même liste de capacités non textuelles désactivées et neutralisent Web ainsi que la configuration MCP locale. `exec` ajoute `--ignore-user-config`, `--ignore-rules`, un répertoire temporaire et un contrôle fail-closed du flux JSON si un item outil apparaît. App Server ajoute des threads `ephemeral`, `dynamicTools=[]`, des environnements/racines de capacité vides, le refus des demandes d'approbation et le même contrôle fail-closed sur les items outils. Le processus App Server est arrêté au shutdown FastAPI et redémarré après erreur, timeout ou annulation. En production, App Server utilise un `ETPOS_CODEX_APP_HOME` dédié ; aucune politique Codex globale n'est imposée au VPS partagé afin de ne pas affecter Hermes ou d'autres usages Codex. `exec` reste le rollback immédiat sans migration de données.
 
 ## Performance et observabilité
 

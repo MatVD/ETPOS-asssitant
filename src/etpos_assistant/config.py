@@ -53,7 +53,7 @@ class Settings:
     public_origin: str = os.getenv("ETPOS_PUBLIC_ORIGIN", "").strip().rstrip("/")
     session_hours: int = int(os.getenv("ETPOS_SESSION_HOURS", "12"))
     provider: str = os.getenv("ETPOS_PROVIDER", "mock").strip().lower()
-    codex_transport: str = os.getenv("ETPOS_CODEX_TRANSPORT", "exec").strip().lower()
+    codex_transport: str = os.getenv("ETPOS_CODEX_TRANSPORT", "app-server").strip().lower()
     codex_binary: str = os.getenv("CODEX_BINARY", "codex")
     codex_model: str = os.getenv("CODEX_MODEL", "").strip()
     codex_reasoning_effort: str = os.getenv("CODEX_REASONING_EFFORT", "").strip().lower()

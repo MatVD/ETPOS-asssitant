@@ -15,6 +15,34 @@ from .prompting import AnswerStatusGate, build_prompt
 from ..config import settings
 
 
+TEXT_ONLY_DISABLED_FEATURES = (
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "computer_use",
+    "enable_mcp_apps",
+    "hooks",
+    "image_generation",
+    "mcp_2026_07_28",
+    "memories",
+    "multi_agent",
+    "non_prefixed_mcp_tool_names",
+    "plugins",
+    "remote_plugin",
+    "shell_tool",
+    "skill_mcp_dependency_install",
+    "skill_search",
+    "tool_call_mcp_elicitation",
+    "tool_suggest",
+    "unified_exec",
+    "view_image",
+    "workspace_dependencies",
+)
+
+_EXEC_PASSIVE_ITEM_TYPES = {"agent_message", "reasoning", "plan", "context_compaction"}
+
+
 @dataclass(frozen=True)
 class CodexRunMetrics:
     prompt_chars: int
@@ -53,6 +81,9 @@ def _codex_command() -> list[str]:
                 f"model_verbosity={json.dumps(settings.codex_model_verbosity)}",
             ]
         )
+    command.extend(["--config", 'web_search="disabled"', "--config", "mcp_servers={}"])
+    for feature in TEXT_ONLY_DISABLED_FEATURES:
+        command.extend(["--disable", feature])
     command.extend(
         [
             "exec",
@@ -131,6 +162,19 @@ def parse_agent_message(raw_line: str) -> str | None:
     return text if isinstance(text, str) and text.strip() else None
 
 
+def parse_forbidden_item_type(raw_line: str) -> str | None:
+    event = _parse_event(raw_line)
+    if not event or event.get("type") != "item.started":
+        return None
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return None
+    item_type = item.get("type")
+    if not isinstance(item_type, str) or item_type in _EXEC_PASSIVE_ITEM_TYPES:
+        return None
+    return item_type
+
+
 def parse_turn_usage(raw_line: str) -> dict[str, int] | None:
     """Return documented token usage from a completed Codex turn."""
     event = _parse_event(raw_line)
@@ -206,6 +250,15 @@ class CodexCliProvider:
                         if first_event_ms is None:
                             first_event_ms = now_ms
                         raw_text = raw.decode("utf-8", errors="replace")
+                        forbidden = parse_forbidden_item_type(raw_text)
+                        if forbidden:
+                            process.kill()
+                            await process.wait()
+                            stderr_task.cancel()
+                            raise RuntimeError(
+                                "Codex CLI a tenté d'utiliser un outil interdit "
+                                f"({forbidden})."
+                            )
                         text = parse_agent_message(raw_text)
                         if text:
                             if first_agent_message_ms is None:

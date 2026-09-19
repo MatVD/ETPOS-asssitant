@@ -14,26 +14,45 @@
 
 ## Isolation de Codex CLI
 
-La V1 utilise Codex CLI à la demande du projet, sans clé API.
+La V1 utilise Codex CLI sans clé API. Deux transports implémentent le même contrat de génération textuelle : `exec`, conservé comme rollback, et `app-server`, utilisé lorsque le vrai streaming texte est souhaité.
 
-Chaque appel :
+### Transport `exec`
+
+Chaque tour :
 
 - utilise `codex exec --ephemeral --json` ;
-- force `--sandbox read-only` ;
-- force `--ask-for-approval never` pour éviter qu'un processus Web reste bloqué sur une question interactive ;
+- force `--sandbox read-only` et `--ask-for-approval never` ;
 - ignore `config.toml` et les règles utilisateur/projet avec `--ignore-user-config` et `--ignore-rules` ;
-- s'exécute dans un répertoire temporaire vide ;
-- reçoit uniquement un environnement filtré ;
-- reçoit la question et les passages ETPOS par stdin ;
-- ne reçoit jamais la base utilisateurs, les cookies, les secrets de l'application ou le chemin du projet dans son prompt.
+- désactive explicitement Web, shell tools, navigateur/computer use, plugins, skills, mémoires, multi-agent et les features MCP configurables avec la même liste que le transport App Server ;
+- neutralise la configuration MCP locale avec `mcp_servers={}` ;
+- échoue fermé si le flux JSON signale le démarrage d'un item outil ;
+- s'exécute dans un répertoire temporaire vide et reçoit uniquement un environnement filtré ;
+- reçoit la question et les passages ETPOS par stdin.
 
-Le prompt interdit explicitement terminal, fichiers, navigateur, recherche Web, MCP, plugins et connaissances externes.
+### Transport `app-server`
+
+Le processus App Server peut rester chaud au niveau du worker FastAPI, mais chaque question démarre un thread `ephemeral` dans un répertoire temporaire distinct. L'application impose :
+
+- sandbox `read-only` et politique d'approbation `never` ;
+- recherche Web désactivée ;
+- fonctions shell, navigateur, computer use, plugins, skills et autres capacités non textuelles désactivées au démarrage ;
+- configuration MCP locale neutralisée par `mcp_servers={}` et fonctionnalités MCP/elicitation associées désactivées ;
+- `dynamicTools=[]`, environnements, racines runtime et capability roots explicitement vides au démarrage du thread ;
+- instructions de base et développeur limitées à un moteur de réponse textuel utilisant uniquement le texte fourni ;
+- refus explicite des demandes d'approbation de commandes ou changements de fichiers ;
+- échec fermé si Codex démarre un type d'item outil inattendu ;
+- environnement filtré identique au transport `exec` ;
+- en production, un `ETPOS_CODEX_APP_HOME` dédié et authentifié directement est obligatoire.
+
+En développement, lorsqu'aucun `ETPOS_CODEX_APP_HOME` n'est défini, l'application crée un CODEX_HOME temporaire contenant uniquement une copie protégée de `auth.json` ; la configuration utilisateur, les règles et les autres fichiers du CODEX_HOME source ne sont pas copiés. En production, cette copie implicite est refusée.
+
+Dans les deux transports, le prompt ne reçoit jamais la base utilisateurs, les cookies, les secrets de l'application ou le chemin du projet. Il reçoit seulement la question, l'historique conversationnel sélectionné et les passages ETPOS récupérés par le backend. Le backend reste propriétaire du retrieval et des citations.
 
 ### Risque résiduel
 
-Codex CLI est un agent capable de commandes locales. Le sandbox `read-only` bloque les écritures mais n'est pas équivalent à « aucun outil ». Une future version destinée à des utilisateurs non fiables devra utiliser un profil de permissions Codex limitant explicitement les lectures à un espace minimal, ou isoler Codex dans un conteneur/service séparé après validation de l'authentification dans cet environnement.
+Codex CLI reste un agent de développement et le sandbox `read-only` n'est pas équivalent à une preuve formelle d'absence de toute capacité locale. Les garde-fous App Server réduisent davantage la surface exposée et échouent fermés sur les événements outils connus/inattendus, mais ils dépendent aussi des garanties du runtime Codex. Avant une ouverture à des utilisateurs non fiables ou à grande échelle, une nouvelle revue d'isolation est obligatoire ; une isolation de processus/conteneur ou un mécanisme d'inférence plus strict pourra alors être nécessaire.
 
-Les identifiants ChatGPT/Codex sont sensibles. `CODEX_HOME` et notamment un éventuel `auth.json` doivent être protégés comme un mot de passe, appartenir uniquement au compte de service et ne jamais être copiés dans le dépôt.
+Les identifiants ChatGPT/Codex sont sensibles. `CODEX_HOME`, `ETPOS_CODEX_APP_HOME` et notamment `auth.json` doivent être protégés comme un mot de passe, appartenir uniquement au compte de service et ne jamais être copiés dans le dépôt.
 
 ## En-têtes applicatifs
 
@@ -47,6 +66,10 @@ En production :
 - placer le service derrière HTTPS/Nginx ;
 - utiliser un utilisateur Unix dédié ;
 - utiliser un `CODEX_HOME` dédié hors du dépôt ;
-- faire `codex login --device-auth` sous cet utilisateur ;
+- utiliser `ETPOS_CODEX_TRANSPORT=app-server` comme transport de production tant que les validations réelles restent satisfaisantes ;
+- utiliser un `ETPOS_CODEX_APP_HOME` dédié et authentifié directement sous l'utilisateur Unix du service ;
+- conserver `ETPOS_CODEX_TRANSPORT=exec` comme rollback immédiat ;
+- ne pas installer une politique Codex globale uniquement pour ETPOS sur un VPS partagé : elle pourrait modifier Hermes ou d'autres usages Codex ;
+- faire `codex login --device-auth` sous l'utilisateur dédié au service ;
 - ne jamais définir `OPENAI_API_KEY` pour cette application ;
 - limiter les permissions Unix du répertoire Codex et des bases SQLite.

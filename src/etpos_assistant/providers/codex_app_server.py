@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from .base import SourceContext
-from .codex_cli import CodexRunMetrics, codex_auth_directory, codex_environment
+from .codex_cli import (
+    TEXT_ONLY_DISABLED_FEATURES,
+    CodexRunMetrics,
+    codex_auth_directory,
+    codex_environment,
+)
 from .prompting import AnswerStatusGate, build_prompt
 from ..config import settings
 
@@ -34,27 +39,6 @@ _APPROVAL_METHODS = {
     "item/fileChange/requestApproval",
 }
 
-_DISABLED_FEATURES = (
-    "apps",
-    "browser_use",
-    "browser_use_external",
-    "browser_use_full_cdp_access",
-    "computer_use",
-    "hooks",
-    "image_generation",
-    "memories",
-    "multi_agent",
-    "plugins",
-    "remote_plugin",
-    "shell_tool",
-    "skill_mcp_dependency_install",
-    "skill_search",
-    "tool_suggest",
-    "unified_exec",
-    "view_image",
-    "workspace_dependencies",
-)
-
 def _app_server_command() -> list[str]:
     command = [
         settings.codex_binary,
@@ -62,8 +46,10 @@ def _app_server_command() -> list[str]:
         "--stdio",
         "--config",
         'web_search="disabled"',
+        "--config",
+        "mcp_servers={}",
     ]
-    for feature in _DISABLED_FEATURES:
+    for feature in TEXT_ONLY_DISABLED_FEATURES:
         command.extend(["--disable", feature])
     if settings.codex_model_verbosity:
         command.extend(
@@ -73,6 +59,26 @@ def _app_server_command() -> list[str]:
             ]
         )
     return command
+
+
+def _thread_start_params(workdir: str) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "ephemeral": True,
+        "cwd": workdir,
+        "approvalPolicy": "never",
+        "sandbox": "read-only",
+        "baseInstructions": _TEXT_ONLY_BASE_INSTRUCTIONS,
+        "developerInstructions": _TEXT_ONLY_BASE_INSTRUCTIONS,
+        "personality": "none",
+        "dynamicTools": [],
+        "environments": [],
+        "runtimeWorkspaceRoots": [],
+        "selectedCapabilityRoots": [],
+        "config": {"web_search": "disabled", "mcp_servers": {}},
+    }
+    if settings.codex_model:
+        params["model"] = settings.codex_model
+    return params
 
 
 def _validate_dedicated_codex_home(home: Path) -> None:
@@ -359,18 +365,7 @@ class CodexAppServerProvider:
                     if process is None:
                         raise RuntimeError("Codex app-server n'a pas démarré.")
 
-                    thread_params: dict[str, Any] = {
-                        "ephemeral": True,
-                        "cwd": turn_workdir.name,
-                        "approvalPolicy": "never",
-                        "sandbox": "read-only",
-                        "baseInstructions": _TEXT_ONLY_BASE_INSTRUCTIONS,
-                        "developerInstructions": _TEXT_ONLY_BASE_INSTRUCTIONS,
-                        "personality": "none",
-                        "config": {"web_search": "disabled"},
-                    }
-                    if settings.codex_model:
-                        thread_params["model"] = settings.codex_model
+                    thread_params = _thread_start_params(turn_workdir.name)
 
                     thread_request_id = self._next_request_id()
                     await _send_json(

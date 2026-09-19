@@ -1,10 +1,12 @@
 from pathlib import Path
 
 from etpos_assistant.providers.codex_cli import (
+    TEXT_ONLY_DISABLED_FEATURES,
     _codex_command,
     codex_auth_directory,
     codex_environment,
     parse_agent_message,
+    parse_forbidden_item_type,
     parse_turn_usage,
 )
 from etpos_assistant.providers.prompting import ABSTENTION_TEXT, AnswerStatusGate, SYSTEM_INSTRUCTIONS
@@ -19,6 +21,27 @@ def test_parse_agent_message_ignores_other_events():
     assert parse_agent_message('{"type":"turn.started"}') is None
     assert parse_agent_message('{"type":"item.completed","item":{"type":"reasoning","text":"secret"}}') is None
     assert parse_agent_message('not-json') is None
+
+
+def test_parse_forbidden_item_type_fails_closed_on_exec_tools():
+    assert (
+        parse_forbidden_item_type(
+            '{"type":"item.started","item":{"type":"command_execution","command":"pwd"}}'
+        )
+        == "command_execution"
+    )
+    assert (
+        parse_forbidden_item_type(
+            '{"type":"item.started","item":{"type":"mcp_tool_call","server":"docs"}}'
+        )
+        == "mcp_tool_call"
+    )
+    assert (
+        parse_forbidden_item_type(
+            '{"type":"item.started","item":{"type":"reasoning","text":"..."}}'
+        )
+        is None
+    )
 
 
 def test_parse_turn_usage_accepts_documented_completed_turn_shape():
@@ -85,7 +108,12 @@ def test_codex_command_is_ephemeral_and_read_only(monkeypatch):
         object.__setattr__(config.settings, "codex_reasoning_effort", "")
         object.__setattr__(config.settings, "codex_model_verbosity", "")
         command = _codex_command()
-        assert command[:4] == [config.settings.codex_binary, "--ask-for-approval", "never", "exec"]
+        assert command[:3] == [config.settings.codex_binary, "--ask-for-approval", "never"]
+        assert "exec" in command
+        assert 'web_search="disabled"' in command
+        assert "mcp_servers={}" in command
+        for feature in TEXT_ONLY_DISABLED_FEATURES:
+            assert feature in command
         assert "--ephemeral" in command
         assert "--json" in command
         assert "--ignore-user-config" in command

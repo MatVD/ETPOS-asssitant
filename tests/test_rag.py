@@ -12,6 +12,27 @@ from etpos_assistant.rag import (
 )
 
 
+def test_get_provider_keeps_exec_as_rollback_and_app_server_explicit():
+    previous_provider = rag_module.settings.provider
+    previous_transport = rag_module.settings.codex_transport
+    previous_runtime = rag_module._codex_app_server_provider
+    try:
+        object.__setattr__(rag_module.settings, "provider", "codex")
+        object.__setattr__(rag_module.settings, "codex_transport", "exec")
+        assert isinstance(rag_module.get_provider(), rag_module.CodexCliProvider)
+
+        rag_module._codex_app_server_provider = None
+        object.__setattr__(rag_module.settings, "codex_transport", "app-server")
+        first = rag_module.get_provider()
+        second = rag_module.get_provider()
+        assert isinstance(first, rag_module.CodexAppServerProvider)
+        assert second is first
+    finally:
+        rag_module._codex_app_server_provider = previous_runtime
+        object.__setattr__(rag_module.settings, "provider", previous_provider)
+        object.__setattr__(rag_module.settings, "codex_transport", previous_transport)
+
+
 def test_history_before_current_question_removes_only_the_just_saved_turn():
     history = [
         {"role": "user", "content": "Comment gérer les utilisateurs ?"},

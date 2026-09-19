@@ -81,8 +81,8 @@ Puis activer Codex dans `.env` :
 
 ```bash
 ETPOS_PROVIDER=codex
-# exec = rollback compatible ; app-server = vrai streaming texte
-ETPOS_CODEX_TRANSPORT=exec
+# app-server = transport par défaut ; exec = rollback compatible
+ETPOS_CODEX_TRANSPORT=app-server
 CODEX_BINARY=codex
 CODEX_MODEL=
 CODEX_REASONING_EFFORT=
@@ -92,7 +92,7 @@ ETPOS_SOURCE_CHAR_LIMIT=9000
 CODEX_TIMEOUT_SECONDS=120
 ```
 
-`ETPOS_CODEX_TRANSPORT=exec` conserve le transport historique et sert de rollback. `ETPOS_CODEX_TRANSPORT=app-server` active le vrai streaming texte via `item/agentMessage/delta`. App Server garde un processus Codex chaud, mais crée un thread éphémère à chaque question : l'historique reste détenu par `app.db`. Laisser `CODEX_MODEL`, `CODEX_REASONING_EFFORT` et `CODEX_MODEL_VERBOSITY` vides conserve les valeurs par défaut de Codex. `ETPOS_RETRIEVAL_LIMIT` et `ETPOS_SOURCE_CHAR_LIMIT` bornent le contexte du chat ; leurs valeurs par défaut restent 6 passages et 9000 caractères par passage tant qu'une réduction n'a pas été validée par les benchmarks. `etpos-assistant codex-status` affiche le transport, le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec le même environnement filtré que le provider de production.
+`ETPOS_CODEX_TRANSPORT=app-server` est le transport par défaut et celui actuellement retenu en production : il fournit le vrai streaming texte via `item/agentMessage/delta`, garde un processus Codex chaud et crée un thread éphémère à chaque question ; l'historique métier reste détenu par `app.db`. `ETPOS_CODEX_TRANSPORT=exec` conserve le transport historique comme rollback immédiat. App Server reste officiellement expérimental côté Codex ; ce risque est accepté ici car le transport est déjà déployé, isolé et validé par l'usage réel, avec `exec` disponible en secours. Laisser `CODEX_MODEL`, `CODEX_REASONING_EFFORT` et `CODEX_MODEL_VERBOSITY` vides conserve les valeurs par défaut de Codex. `ETPOS_RETRIEVAL_LIMIT` et `ETPOS_SOURCE_CHAR_LIMIT` bornent le contexte du chat ; leurs valeurs par défaut restent 6 passages et 9000 caractères par passage tant qu'une réduction n'a pas été validée par les benchmarks. `etpos-assistant codex-status` affiche le transport, le binaire, le répertoire d'authentification effectif et exécute `codex login status` avec le même environnement filtré que le provider de production.
 
 Démarrer :
 
@@ -116,14 +116,7 @@ sudo -u etpos-assistant \
 
 L'authentification doit être faite une fois avant de lancer le service. Aucun `OPENAI_API_KEY` n'est nécessaire.
 
-Pour activer App Server en production, utiliser un `CODEX_HOME` **dédié** au transport ETPOS. Ce répertoire est ensuite géré directement par Codex, qui peut y créer ses skills système, caches, bases d'état, logs, snapshots et autres fichiers runtime :
-
-```bash
-ETPOS_CODEX_TRANSPORT=app-server
-ETPOS_CODEX_APP_HOME=/var/lib/etpos-assistant/codex-app
-```
-
-Ce répertoire doit être authentifié directement avec `codex login --device-auth` sous le compte Unix du service. Le backend refuse App Server en production si `ETPOS_CODEX_APP_HOME` n'est pas défini. Repasser `ETPOS_CODEX_TRANSPORT=exec` fournit le rollback immédiat.
+Le déploiement VPS utilise actuellement `ETPOS_CODEX_TRANSPORT=app-server`. Ce choix est conservé tant que les validations fonctionnelles et de sécurité restent satisfaisantes. Le service doit utiliser son `ETPOS_CODEX_APP_HOME` dédié et authentifié directement ; `ETPOS_CODEX_TRANSPORT=exec` reste le rollback immédiat sans migration de données si une mise à jour Codex ou un changement de comportement App Server pose problème. Aucune politique Codex globale ne doit être ajoutée uniquement pour ETPOS sur un VPS partagé si elle risque d'affecter Hermes ou d'autres usages Codex.
 
 ## Commandes
 
