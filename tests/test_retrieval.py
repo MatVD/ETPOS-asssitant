@@ -175,7 +175,8 @@ def test_divide_account_is_not_reinterpreted_as_account_creation(monkeypatch, tm
     )
 
     plan = build_search_plan("Comment diviser un compte ?")
-    assert [item.label for item in plan] == ["lexical"]
+    assert any(item.label.startswith("DIVISION_COMPTE:") for item in plan)
+    assert not any(item.label.startswith("COMPTE_VENTE:") for item in plan)
     rows = search_sections("Comment diviser un compte ?", limit=2)
     assert rows[0].title == "Diviser le compte"
 
@@ -294,6 +295,45 @@ def test_natural_domain_phrasing_expands_to_documented_concepts():
     assert any(item.label.startswith("PERMISSIONS_UTILISATEUR:") for item in permissions)
     assert any(item.label.startswith("REGLEMENT_MIXTE:") for item in split_payment)
     assert any(item.label.startswith("UTILISATEUR:") for item in implicit_user)
+
+
+def test_controlled_typo_correction_recovers_domain_concepts():
+    backup = build_search_plan("Coment faire une sauvgarde manuele ?")
+    permissions = build_search_plan("Ou regler les permisions d'un utilisteur ?")
+    supplier = build_search_plan("Voir le compte courrant d'un fourniisseur")
+
+    assert any(item.label == "corrected" for item in backup)
+    assert any(item.label.startswith("SAUVEGARDE:") for item in backup)
+    assert any(item.label.startswith("PERMISSIONS_UTILISATEUR:") for item in permissions)
+    assert any(item.label.startswith("COMPTE_COURANT_FOURNISSEUR:") for item in supplier)
+
+
+def test_realistic_multi_intent_and_ambiguous_phrasing_expand_to_concepts():
+    payments = analyze_query(
+        "Créer un type de paiement puis combiner deux moyens de règlement sur une vente"
+    )
+    backup = analyze_query("Faire une sauvegarde manuelle et la restaurer ensuite")
+    restaurant = analyze_query(
+        "Organiser mes salles et mes tables puis partager l'addition d'une table"
+    )
+    customer_account = analyze_query("Comment consulter ce qu'un client a sur son compte ?")
+
+    assert {"TYPE_REGLEMENT", "REGLEMENT_MIXTE"} <= {c.key for c in payments.concepts}
+    assert {"SAUVEGARDE_MANUELLE", "RESTAURATION_SAUVEGARDE"} <= {
+        c.key for c in backup.concepts
+    }
+    assert {"SALLES_TABLES", "DIVISION_COMPTE"} <= {c.key for c in restaurant.concepts}
+    assert {"COMPTE_COURANT_CLIENT", "COMPTE_VENTE"} <= {
+        c.key for c in customer_account.concepts
+    }
+
+
+def test_card_points_and_person_ambiguity_keep_documented_meanings():
+    card = analyze_query("Où je gère la carte et les points du client ?")
+    person = analyze_query("Je dois ajouter une nouvelle personne dans ETPOS")
+
+    assert "CARTE_POINTS" in {c.key for c in card.concepts}
+    assert {"CLIENT_FICHIER", "UTILISATEUR"} <= {c.key for c in person.concepts}
 
 
 def test_automatic_backup_verb_expands_to_documented_concept():

@@ -134,6 +134,12 @@ def _build_search_plan(
 
     variants = [SearchVariant(label="lexical", query=base_query, weight=1.0)]
     seen = {base_query}
+    raw_normalized = normalize_domain_text(question)
+    if analysis.normalized_question != raw_normalized:
+        corrected_query = build_fts_query(analysis.normalized_question)
+        if corrected_query and corrected_query not in seen:
+            seen.add(corrected_query)
+            variants.append(SearchVariant(label="corrected", query=corrected_query, weight=1.1))
     for concept in analysis.concepts:
         for index, terms in enumerate(concept.query_variants, start=1):
             query = _build_concept_query(terms)
@@ -349,7 +355,9 @@ def search_sections_with_trace(
         for variant in plan:
             rows = _query_sections(conn, variant.query, candidate_limit, tuning)
             variant_traces.append(_variant_trace(variant, rows))
-            if variant.label == "lexical" and rows:
+            if variant.label == "corrected" and rows:
+                lexical_anchor_id = rows[0].id
+            elif variant.label == "lexical" and rows and lexical_anchor_id is None:
                 lexical_anchor_id = rows[0].id
             for rank, section in enumerate(rows, start=1):
                 candidate = candidates.setdefault(

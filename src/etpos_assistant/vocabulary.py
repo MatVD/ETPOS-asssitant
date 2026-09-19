@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 
 CREATE_INTENT_TERMS = (
@@ -156,6 +157,7 @@ UTILISATEUR = RetrievalConcept(
         ("gestion", "utilisateurs"),
         ("fichier", "utilisateurs"),
         ("utilisateur", "modifier"),
+        ("utilisateurs", "personnes"),
     ),
     path_signals=("gestion des utilisateurs", "fichier d utilisateurs"),
     text_signals=("les utilisateurs sont", "fichier utilisateurs", "utilisateur a modifier"),
@@ -265,6 +267,93 @@ PERMISSIONS_UTILISATEUR = RetrievalConcept(
 )
 
 
+OUVERTURE_CAISSE = RetrievalConcept(
+    key="OUVERTURE_CAISSE",
+    query_variants=(
+        ("ouvrir", "fermer", "caisse"),
+        ("ouverture", "caisse"),
+    ),
+    path_signals=("gestion de la caisse", "ouvrir et fermer caisse"),
+    text_signals=("ouvrir caisse", "ouverture et fermeture de la caisse"),
+)
+
+PROMOTION_QUANTITE = RetrievalConcept(
+    key="PROMOTION_QUANTITE",
+    query_variants=(
+        ("promotion", "quantite"),
+        ("promotions", "prix", "quantite"),
+        ("promotion", "articles", "quantite"),
+    ),
+    path_signals=("gestion des promotions", "promotion par la quantite"),
+    text_signals=("quantite pour acquérir", "quantite pour l achat", "promotion par la quantite"),
+)
+
+TYPE_REGLEMENT = RetrievalConcept(
+    key="TYPE_REGLEMENT",
+    query_variants=(
+        ("types", "reglement"),
+        ("ajouter", "type", "reglement"),
+        ("type", "paiement"),
+    ),
+    path_signals=("configurer etpos", "types de reglement"),
+    text_signals=("types de reglement", "types de paiement"),
+)
+
+SAUVEGARDE_MANUELLE = RetrievalConcept(
+    key="SAUVEGARDE_MANUELLE",
+    query_variants=(
+        ("effectuer", "sauvegarde"),
+        ("sauvegarde", "exporter"),
+        ("sauvegarde", "manuelle"),
+    ),
+    path_signals=("sauvegarde", "effectuer la sauvegarde"),
+    text_signals=("onglet exporter", "pour effectuer une sauvegarde"),
+)
+
+RESTAURATION_SAUVEGARDE = RetrievalConcept(
+    key="RESTAURATION_SAUVEGARDE",
+    query_variants=(
+        ("restaurer", "sauvegarde"),
+        ("onglet", "restaurer", "sauvegarde"),
+    ),
+    path_signals=("sauvegarde", "restaurer une sauvegarde"),
+    text_signals=("restaurer une sauvegarde", "onglet restaurer"),
+)
+
+SALLES_TABLES = RetrievalConcept(
+    key="SALLES_TABLES",
+    query_variants=(
+        ("configurer", "salles", "tables"),
+        ("gerer", "salles", "tables"),
+    ),
+    path_signals=("configurer salles et gerer tables",),
+    text_signals=("salles", "tables"),
+)
+
+DIVISION_COMPTE = RetrievalConcept(
+    key="DIVISION_COMPTE",
+    query_variants=(
+        ("diviser", "compte", "table"),
+        ("division", "compte"),
+        ("diviser", "addition", "table"),
+    ),
+    path_signals=("diviser le compte",),
+    text_signals=("diviser le compte", "division de compte"),
+)
+
+CARTE_POINTS = RetrievalConcept(
+    key="CARTE_POINTS",
+    query_variants=(
+        ("gestion", "cartes", "points"),
+        ("consulter", "gerer", "points"),
+        ("carte", "points", "client"),
+        ("rfid", "ibuttons", "points"),
+    ),
+    path_signals=("gestion des cartes a points", "cartes a points", "rfid et ibuttons"),
+    text_signals=("carte de points", "points attribues", "gerer les points", "gestion de cartes fidelisation"),
+)
+
+
 CARTE_GENERIQUE = RetrievalConcept(
     key="CARTE_GENERIQUE",
     query_variants=(
@@ -278,8 +367,50 @@ CARTE_GENERIQUE = RetrievalConcept(
 
 CONCEPT_RULES = (
     ConceptRule(
+        concept=OUVERTURE_CAISSE,
+        any_phrases=("ouvrir caisse", "ouverture de caisse", "caisse fermee"),
+        required_term_groups=(
+            ("caisse",),
+            ("fermee", "fermer", "ouverture", "ouvrir"),
+            ("commencer", "debut", "service", "ouverture", "ouvrir"),
+        ),
+    ),
+    ConceptRule(
+        concept=PROMOTION_QUANTITE,
+        any_phrases=("promotion par la quantite", "promo par quantite"),
+        required_term_groups=(
+            ("promo", "promotion", "promotions"),
+            ("article", "articles", "exemplaire", "exemplaires"),
+            ("plusieurs", "quantite", "quantites"),
+        ),
+    ),
+    ConceptRule(
+        concept=TYPE_REGLEMENT,
+        any_phrases=(
+            "type de paiement",
+            "types de paiement",
+            "type de reglement",
+            "types de reglement",
+        ),
+    ),
+    ConceptRule(
         concept=SAUVEGARDE,
+        required_term_groups=(("sauvegarde", "sauvegardes", "sauvegarder"),),
         any_phrases=("copie de securite", "copies de securite", "backup", "backups"),
+    ),
+    ConceptRule(
+        concept=SAUVEGARDE_MANUELLE,
+        required_term_groups=(
+            ("sauvegarde", "sauvegardes", "sauvegarder", "backup", "backups"),
+            ("manuel", "manuelle", "manuellement", "exporter"),
+        ),
+    ),
+    ConceptRule(
+        concept=RESTAURATION_SAUVEGARDE,
+        required_term_groups=(
+            ("sauvegarde", "sauvegardes", "backup", "backups"),
+            ("restaurer", "restauration", "restaure"),
+        ),
     ),
     ConceptRule(
         concept=SAUVEGARDE_AUTOMATIQUE,
@@ -304,6 +435,11 @@ CONCEPT_RULES = (
             "deux moyens de paiement",
             "plusieurs moyens de paiement",
             "paiements differents",
+            "reglements differents",
+        ),
+        required_term_groups=(
+            ("paiement", "paiements", "reglement", "reglements"),
+            ("deux", "2", "plusieurs", "differents", "combiner"),
         ),
     ),
     ConceptRule(
@@ -320,12 +456,38 @@ CONCEPT_RULES = (
         required_term_groups=(("pesee", "pesage", "peser"),),
     ),
     ConceptRule(
+        concept=CARTE_POINTS,
+        required_term_groups=(
+            CARD_TERMS,
+            ("point", "points"),
+        ),
+    ),
+    ConceptRule(
+        concept=SALLES_TABLES,
+        required_term_groups=(
+            ("salle", "salles", "zone", "zones"),
+            TABLE_TERMS,
+        ),
+    ),
+    ConceptRule(
+        concept=DIVISION_COMPTE,
+        any_phrases=("diviser le compte", "division du compte", "diviser l addition", "partager l addition", "separer l addition"),
+        required_term_groups=(
+            ("addition", "compte"),
+            ("diviser", "division", "partager", "separer"),
+        ),
+    ),
+    ConceptRule(
         concept=CLIENT_FICHIER,
         required_term_groups=(
             CLIENT_TERMS,
             ("fiche", "fichier", "gerer", "gere", "gestion", "modifier", "modifie", "editer"),
         ),
-        excluded_phrases=("compte courant", "comptes courants", "reglement client"),
+        excluded_phrases=("compte courant", "comptes courants", "reglement client", "carte et les points", "carte a points"),
+    ),
+    ConceptRule(
+        concept=CLIENT_FICHIER,
+        required_term_groups=(("personne", "personnes"), CREATE_INTENT_TERMS),
     ),
     ConceptRule(
         concept=ARTICLE,
@@ -351,6 +513,15 @@ CONCEPT_RULES = (
         excluded_phrases=("fournisseur", "fournisseurs"),
     ),
     ConceptRule(
+        concept=COMPTE_COURANT_CLIENT,
+        required_term_groups=(
+            ACCOUNT_TERMS,
+            CLIENT_TERMS,
+            ("consulter", "voir", "solde", "reste"),
+        ),
+        excluded_phrases=("fournisseur", "fournisseurs"),
+    ),
+    ConceptRule(
         concept=COMPTE_COURANT_FOURNISSEUR,
         required_term_groups=(ACCOUNT_TERMS, ("courant", "courants"), SUPPLIER_TERMS),
         any_phrases=("compte courant fournisseur", "comptes courants fournisseurs"),
@@ -372,11 +543,24 @@ CONCEPT_RULES = (
     ),
     ConceptRule(
         concept=UTILISATEUR,
+        required_term_groups=(("personne", "personnes"), CREATE_INTENT_TERMS),
+    ),
+    ConceptRule(
+        concept=UTILISATEUR,
         required_term_groups=(
             ("personne", "personnes", "employe", "employes", "caissier", "caissiers"),
             ("connecter", "connexion", "utiliser", "acces"),
             CREATE_INTENT_TERMS,
         ),
+    ),
+    ConceptRule(
+        concept=COMPTE_VENTE,
+        required_term_groups=(
+            ACCOUNT_TERMS,
+            CLIENT_TERMS,
+            ("consulter", "voir", "solde", "reste"),
+        ),
+        excluded_phrases=("compte courant", "comptes courants", "fournisseur", "fournisseurs"),
     ),
     ConceptRule(
         concept=COMPTE_VENTE,
@@ -400,6 +584,54 @@ def normalize_domain_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+_DOMAIN_SPELLING_TERMS = (
+    "sauvegarde",
+    "sauvegardes",
+    "permission",
+    "permissions",
+    "utilisateur",
+    "utilisateurs",
+    "reglement",
+    "reglements",
+    "paiement",
+    "paiements",
+    "fournisseur",
+    "fournisseurs",
+    "courant",
+    "courants",
+    "imprimante",
+    "peripherique",
+    "peripheriques",
+    "etiquette",
+    "etiquettes",
+    "promotion",
+    "promotions",
+    "quantite",
+    "restaurer",
+)
+
+
+def _correct_domain_token(token: str) -> str:
+    if len(token) < 6 or token in _DOMAIN_SPELLING_TERMS:
+        return token
+
+    best_term = token
+    best_ratio = 0.0
+    for candidate in _DOMAIN_SPELLING_TERMS:
+        if candidate[0] != token[0] or abs(len(candidate) - len(token)) > 2:
+            continue
+        ratio = SequenceMatcher(None, token, candidate).ratio()
+        if ratio > best_ratio:
+            best_term = candidate
+            best_ratio = ratio
+    return best_term if best_ratio >= 0.88 else token
+
+
+def normalize_retrieval_text(value: str) -> str:
+    normalized = normalize_domain_text(value)
+    return " ".join(_correct_domain_token(token) for token in normalized.split())
+
+
 def _rule_matches(rule: ConceptRule, text: str, tokens: set[str]) -> bool:
     if any(phrase in text for phrase in rule.excluded_phrases):
         return False
@@ -419,7 +651,7 @@ def _matched_labels(
 
 
 def analyze_query(question: str) -> QueryAnalysis:
-    text = normalize_domain_text(question)
+    text = normalize_retrieval_text(question)
     token_list = tuple(text.split())
     tokens = set(token_list)
 

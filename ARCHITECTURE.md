@@ -53,6 +53,14 @@ Les sources ne sont pas considérées comme exploitables uniquement parce qu'ell
 
 Les actualités officielles constituent uniquement un niveau documentaire complémentaire pour des fonctionnalités récentes absentes du manuel ou du Support. Elles sont déclarées article par article dans le registre : le pipeline ne parcourt pas automatiquement le blog. La première source active est l'article français ETPOS-Verifone, publié le 4 août 2026, avec une priorité inférieure au Support, un profil `news_article` qui vérifie l'origine `/fr/blog/`, le titre, un volume minimal de contenu et la présence d'une date de publication, ainsi qu'un contrat `eval/news.jsonl`. La date `article:published_time` est conservée comme métadonnée documentaire lorsqu'aucune date de révision n'est disponible. Aucun changement de ranking n'est appliqué uniquement pour faire respecter la hiérarchie des types : une FAQ ou une actualité très précisément pertinente peut légitimement devancer un passage plus général du manuel.
 
+### Retrieval métier
+
+Le retrieval reste fondé sur FTS5/BM25 ; aucun embedding n'est ajouté tant qu'une faiblesse mesurée ne le justifie pas. La requête utilisateur produit un ancrage lexical, puis des variantes issues d'une taxonomie ETPOS contrôlée. Les variantes sont fusionnées par RRF et rerankées avec des signaux de titres, chemins et contenu ; lorsqu'une question active plusieurs concepts plausibles, la sélection finale conserve de la diversité afin qu'un top 5 puisse couvrir plusieurs intentions ou sens métier au lieu d'être monopolisé par un seul concept.
+
+Les fautes de frappe ne déclenchent pas une recherche fuzzy sur tout le corpus. Seuls les tokens suffisamment longs et très proches d'un petit lexique métier contrôlé peuvent être corrigés. La variante lexicale originale est conservée et une variante corrigée est ajoutée ; la correction sert également à la détection des concepts. Cette stratégie vise notamment les erreurs usuelles sur les termes ETPOS (sauvegarde, permissions, utilisateurs, règlements, fournisseurs, etc.) tout en évitant de transformer arbitrairement le vocabulaire libre de l'utilisateur.
+
+La taxonomie contient des concepts réutilisables, pas des réponses codées en dur : comptes courants client/fournisseur, compte de vente, utilisateurs, types et règlements mixtes, sauvegarde manuelle/automatique/restauration, ouverture de caisse, salles/tables, division de compte, promotions par quantité, cartes à points, etc. Toute extension doit être justifiée par un échec reproductible du benchmark et rejouée contre les jeux historiques pour éviter une amélioration locale au prix d'une régression générale.
+
 ### Mise à jour de `docs.db`
 
 `docs.db` est reconstructible et pratiquement en lecture seule pendant le fonctionnement normal. Le runtime utilise donc `journal_mode=DELETE` plutôt que WAL afin que l'index actif soit un fichier SQLite autonome, sans sidecars susceptibles de rendre un remplacement atomique ambigu.
