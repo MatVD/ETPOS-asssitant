@@ -56,7 +56,7 @@ Les identifiants ChatGPT/Codex sont sensibles. `CODEX_HOME`, `ETPOS_CODEX_APP_HO
 
 ## En-têtes applicatifs
 
-L'application ajoute notamment : CSP restrictive, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy` restrictive et `frame-ancestors 'none'`.
+L'application ajoute notamment : CSP restrictive, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Permissions-Policy` restrictive et `frame-ancestors 'none'`. `same-origin` est volontaire : le contrôle anti-CSRF du login peut utiliser `Referer` comme signal de même origine lorsque `Origin` n'est pas envoyé, tout en évitant d'envoyer le référent vers un site externe.
 
 ## Production
 

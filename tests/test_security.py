@@ -62,10 +62,39 @@ async def test_security_headers_match_documented_policy():
 
     response = await security_headers(request, call_next)
 
-    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Referrer-Policy"] == "same-origin"
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+
+@pytest.mark.asyncio
+async def test_login_security_policy_preserves_referer_fallback():
+    request = _request(method="GET")
+
+    async def call_next(_request):
+        return PlainTextResponse("ok")
+
+    response = await security_headers(request, call_next)
+
+    assert response.headers["Referrer-Policy"] == "same-origin"
+
+    previous_env = settings.env
+    previous_origin = settings.public_origin
+    try:
+        object.__setattr__(settings, "env", "production")
+        object.__setattr__(settings, "public_origin", "https://agent.matblock.com")
+        post = _request(
+            method="POST",
+            headers={
+                "referer": "https://agent.matblock.com/login",
+                "host": "agent.matblock.com",
+            },
+        )
+        assert same_origin_request(post)
+    finally:
+        object.__setattr__(settings, "env", previous_env)
+        object.__setattr__(settings, "public_origin", previous_origin)
 
 
 def test_same_origin_request_uses_explicit_public_origin_in_production():
