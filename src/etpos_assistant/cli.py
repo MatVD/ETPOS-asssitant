@@ -50,7 +50,7 @@ from .ingestion.support import (
 )
 from .ingestion.validation import SourceContentError, validate_source_html
 from .providers.codex_cli import codex_auth_directory, codex_environment
-from .rag import shutdown_provider_runtime
+from .rag import get_provider, shutdown_provider_runtime
 from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
 
@@ -589,6 +589,87 @@ def cmd_eval_answer(args) -> None:
     asyncio.run(_run_eval_answer_with_shutdown(args))
 
 
+
+async def _run_eval_concurrency(args) -> None:
+    path = Path(args.path)
+    try:
+        cases = load_benchmark(path)
+    except (OSError, BenchmarkError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    case = next((item for item in cases if item.case_id == args.case_id), None)
+    if case is None:
+        raise SystemExit(f"Cas inconnu: {args.case_id}")
+    if case.answerability == "none":
+        raise SystemExit("Le test de concurrence exige un cas répondable.")
+
+    levels = args.concurrency or [1, 2, 5, 10]
+    if any(level < 1 for level in levels):
+        raise SystemExit("--concurrency doit contenir uniquement des entiers >= 1.")
+
+    provider = get_provider()
+    drain_metrics = getattr(provider, "drain_metrics", None)
+    if not callable(drain_metrics):
+        raise SystemExit(
+            "eval-concurrency exige le transport Codex app-server instrumenté."
+        )
+
+    docs_path = Path(args.docs_db).expanduser() if args.docs_db else None
+    if docs_path is not None:
+        try:
+            validate_docs_database(docs_path, require_delete_journal=False)
+        except DocsDatabaseError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    print(f"Cas de charge: {case.case_id} — {case.question}")
+    for level in levels:
+        drain_metrics()
+        batch_started = asyncio.get_running_loop().time()
+        answers = await asyncio.gather(
+            *[
+                generate_answer_for_case(case, limit=args.limit, db_path=docs_path)
+                for _ in range(level)
+            ]
+        )
+        batch_ms = (asyncio.get_running_loop().time() - batch_started) * 1000.0
+        metrics = drain_metrics()
+        waits = sorted(
+            metric.queue_wait_ms
+            for metric in metrics
+            if metric.queue_wait_ms is not None
+        )
+        latencies = sorted(answer.total_latency_ms for answer in answers)
+        p95_index = max(0, (95 * len(latencies) + 99) // 100 - 1)
+        wait_p95_index = max(0, (95 * len(waits) + 99) // 100 - 1) if waits else 0
+        mean_latency = sum(latencies) / len(latencies)
+        mean_wait = sum(waits) / len(waits) if waits else 0.0
+        p95_wait = waits[wait_p95_index] if waits else 0.0
+        print(
+            f"concurrence={level} "
+            f"batch={batch_ms:.0f}ms "
+            f"latence_moyenne={mean_latency:.0f}ms "
+            f"latence_p95={latencies[p95_index]:.0f}ms "
+            f"queue_moyenne={mean_wait:.0f}ms "
+            f"queue_p95={p95_wait:.0f}ms"
+        )
+
+
+async def _run_eval_concurrency_with_shutdown(args) -> None:
+    try:
+        await _run_eval_concurrency(args)
+    finally:
+        await shutdown_provider_runtime()
+
+
+def cmd_eval_concurrency(args) -> None:
+    if settings.provider != "codex" or settings.codex_transport != "app-server":
+        raise SystemExit(
+            "eval-concurrency exige ETPOS_PROVIDER=codex et ETPOS_CODEX_TRANSPORT=app-server."
+        )
+    init_all()
+    asyncio.run(_run_eval_concurrency_with_shutdown(args))
+
+
 def cmd_rescore_answer_report(args) -> None:
     benchmark_path = Path(args.benchmark).expanduser()
     report_path = Path(args.report).expanduser()
@@ -778,6 +859,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Écrire un rapport JSON détaillé pour comparaison et revue humaine",
     )
     p.set_defaults(func=cmd_eval_answer)
+
+    p = sub.add_parser(
+        "eval-concurrency",
+        help="Mesurer la latence et l'attente App Server sous plusieurs niveaux de concurrence",
+    )
+    p.add_argument("--path", default="eval/challenge.jsonl")
+    p.add_argument("--case-id", default="challenge-followup-restore")
+    p.add_argument("--docs-db", help="Base documentaire explicite à utiliser")
+    p.add_argument("--limit", type=int, default=6)
+    p.add_argument(
+        "--concurrency",
+        action="append",
+        type=int,
+        help="Niveau de concurrence à tester ; répétable. Défaut: 1, 2, 5, 10.",
+    )
+    p.set_defaults(func=cmd_eval_concurrency)
 
     p = sub.add_parser(
         "rescore-answer-report",

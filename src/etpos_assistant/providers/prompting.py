@@ -70,6 +70,7 @@ N'utilise aucune connaissance externe pour compléter une information absente.
 Pour chaque affirmation procédurale importante, cite un ou plusieurs identifiants de source sous la forme [S1], [S2], etc.
 Seuls les identifiants des blocs <source> du tour actuel sont citables ; l'historique de conversation n'est jamais une source documentaire.
 Les blocs <source> sont fournis par ordre décroissant de pertinence pour la question (S1 est le mieux classé). Cet ordre exprime la pertinence du retrieval, pas une hiérarchie d'autorité entre types de documents.
+Le type, la version et la date de révision éventuels de chaque document sont fournis comme métadonnées. Le manuel officiel ETPOS (type="manual") reste la source de vérité fonctionnelle : lorsqu'il documente explicitement le sujet demandé, ne le contredis pas avec une source complémentaire. Les autres types de sources peuvent compléter un point non documenté dans le manuel, mais ne doivent pas silencieusement remplacer une procédure, un libellé ou une règle explicitement décrits par le manuel.
 Privilégie les chemins de menus exacts et les étapes concrètes quand ils figurent dans les sources.
 Réponds de façon concise et directe : donne d'abord l'action ou le chemin utile, puis uniquement les détails nécessaires pour répondre correctement à la question.
 Commence toujours ta réponse par une ligne de statut exactement parmi : [[ETPOS_STATUS:full]], [[ETPOS_STATUS:partial]] ou [[ETPOS_STATUS:none]]. Cette ligne est un protocole interne et sera retirée avant affichage.
@@ -93,8 +94,18 @@ def build_prompt(question: str, sources: list[SourceContext], history: list[dict
             parts.append(f"{item['role']}: {item['content'][:1200]}")
     parts.append("\nSources documentaires autorisées :")
     for source in sources:
+        metadata = [
+            f'id="{source.source_id}"',
+            f'title="{source.title}"',
+            f'path="{source.heading_path}"',
+            f'type="{source.source_type}"',
+        ]
+        if source.document_version:
+            metadata.append(f'version="{source.document_version}"')
+        if source.revision_date:
+            metadata.append(f'revision_date="{source.revision_date}"')
         parts.append(
-            f'<source id="{source.source_id}" title="{source.title}" path="{source.heading_path}">\n'
+            f"<source {' '.join(metadata)}>\n"
             f"{source.text}\n</source>"
         )
     parts.append(f"\nQuestion utilisateur : {question}")

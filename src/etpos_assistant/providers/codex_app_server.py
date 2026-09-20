@@ -5,6 +5,7 @@ import json
 import shutil
 import tempfile
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -207,6 +208,7 @@ class CodexAppServerProvider:
 
     def __init__(self) -> None:
         self.last_metrics: CodexRunMetrics | None = None
+        self._completed_metrics: deque[CodexRunMetrics] = deque(maxlen=256)
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[bytes] | None = None
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
@@ -217,6 +219,11 @@ class CodexAppServerProvider:
     def _next_request_id(self) -> int:
         self._request_id += 1
         return self._request_id
+
+    def drain_metrics(self) -> list[CodexRunMetrics]:
+        metrics = list(self._completed_metrics)
+        self._completed_metrics.clear()
+        return metrics
 
     async def _start_process(self) -> float:
         binary = shutil.which(settings.codex_binary)
@@ -337,8 +344,10 @@ class CodexAppServerProvider:
         prompt_started = time.perf_counter()
         prompt = build_prompt(question, sources, history)
         prompt_build_ms = (time.perf_counter() - prompt_started) * 1000.0
+        queue_started = time.perf_counter()
 
         async with self._turn_lock:
+            queue_wait_ms = (time.perf_counter() - queue_started) * 1000.0
             process_spawn_ms = 0.0
             first_event_ms: float | None = None
             first_delta_ms: float | None = None
@@ -570,9 +579,11 @@ class CodexAppServerProvider:
                 first_event_ms=first_event_ms,
                 first_agent_message_ms=first_delta_ms,
                 total_ms=total_ms,
+                queue_wait_ms=queue_wait_ms,
                 input_tokens=usage.get("input_tokens"),
                 cached_input_tokens=usage.get("cached_input_tokens"),
                 output_tokens=usage.get("output_tokens"),
                 reasoning_output_tokens=usage.get("reasoning_output_tokens"),
                 stream_chunks=len(streamed_chunks),
             )
+            self._completed_metrics.append(self.last_metrics)

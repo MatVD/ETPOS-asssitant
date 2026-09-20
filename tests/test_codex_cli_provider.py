@@ -2,6 +2,7 @@ from pathlib import Path
 
 from etpos_assistant.providers.codex_cli import (
     TEXT_ONLY_DISABLED_FEATURES,
+    CodexRunMetrics,
     _codex_command,
     codex_auth_directory,
     codex_environment,
@@ -9,7 +10,13 @@ from etpos_assistant.providers.codex_cli import (
     parse_forbidden_item_type,
     parse_turn_usage,
 )
-from etpos_assistant.providers.prompting import ABSTENTION_TEXT, AnswerStatusGate, SYSTEM_INSTRUCTIONS
+from etpos_assistant.providers.base import SourceContext
+from etpos_assistant.providers.prompting import (
+    ABSTENTION_TEXT,
+    AnswerStatusGate,
+    SYSTEM_INSTRUCTIONS,
+    build_prompt,
+)
 
 
 def test_parse_agent_message_accepts_completed_agent_message():
@@ -59,14 +66,52 @@ def test_parse_turn_usage_accepts_documented_completed_turn_shape():
     assert parse_turn_usage("not-json") is None
 
 
+def test_codex_run_metrics_serializes_queue_wait():
+    metrics = CodexRunMetrics(
+        prompt_chars=100,
+        prompt_build_ms=1.0,
+        process_spawn_ms=2.0,
+        first_event_ms=3.0,
+        first_agent_message_ms=4.0,
+        total_ms=10.0,
+        queue_wait_ms=5.5,
+    )
+
+    assert metrics.as_dict()["queue_wait_ms"] == 5.5
+
+
 def test_prompt_prefers_supported_partial_answer_before_full_abstention():
     assert "informations utiles" in SYSTEM_INSTRUCTIONS
     assert "abstention complète" in SYSTEM_INSTRUCTIONS
     assert "absence d'un titre exactement identique" in SYSTEM_INSTRUCTIONS
     assert "concise et directe" in SYSTEM_INSTRUCTIONS
+    assert 'type="manual"' in SYSTEM_INSTRUCTIONS
+    assert "source de vérité fonctionnelle" in SYSTEM_INSTRUCTIONS
     assert "[[ETPOS_STATUS:full]]" in SYSTEM_INSTRUCTIONS
     assert "[[ETPOS_STATUS:partial]]" in SYSTEM_INSTRUCTIONS
     assert "[[ETPOS_STATUS:none]]" in SYSTEM_INSTRUCTIONS
+
+
+def test_prompt_includes_document_type_version_and_revision_metadata():
+    prompt = build_prompt(
+        "Comment sauvegarder ?",
+        [
+            SourceContext(
+                source_id="S1",
+                title="Sauvegarde",
+                heading_path="SÉCURITÉ > Sauvegarde",
+                text="Texte documentaire",
+                source_type="manual",
+                document_version="V5.34",
+                revision_date="2026-01-30",
+            )
+        ],
+        [],
+    )
+
+    assert 'type="manual"' in prompt
+    assert 'version="V5.34"' in prompt
+    assert 'revision_date="2026-01-30"' in prompt
 
 
 def test_answer_status_gate_hides_marker_and_preserves_streaming():

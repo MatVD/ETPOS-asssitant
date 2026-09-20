@@ -443,6 +443,9 @@ async def generate_answer_for_case(
             title=section.title,
             heading_path=section.heading_path,
             text=section.source_text[: settings.source_char_limit],
+            source_type=section.source_type,
+            document_version=section.document_version,
+            revision_date=section.revision_date,
         )
         for index, section in enumerate(sections)
     ]

@@ -10,6 +10,9 @@ class SourceContext:
     title: str
     heading_path: str
     text: str
+    source_type: str = "unknown"
+    document_version: str | None = None
+    revision_date: str | None = None
 
 
 class LLMProvider(Protocol):

@@ -45,6 +45,7 @@ class RetrievedSection:
     revision_date: str | None
     document_hash: str
     score: float
+    source_type: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -175,6 +176,7 @@ def _row_to_section(row) -> RetrievedSection:
         revision_date=row["detected_revision_date"],
         document_hash=row["content_hash"],
         score=float(row["score"]),
+        source_type=row["source_type"],
     )
 
 
@@ -186,7 +188,8 @@ def _query_sections(
 ) -> list[RetrievedSection]:
     sql = f"""
         SELECT s.id, s.title, s.heading_path, s.source_url, s.source_text,
-               d.name AS document_name, d.detected_version, d.detected_revision_date, d.content_hash,
+               d.name AS document_name, d.source_type, d.detected_version,
+               d.detected_revision_date, d.content_hash,
                bm25(
                    sections_fts,
                    {float(tuning.title_weight)},

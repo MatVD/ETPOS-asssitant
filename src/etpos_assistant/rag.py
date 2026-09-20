@@ -202,6 +202,9 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
             title=section.title,
             heading_path=section.heading_path,
             text=section.source_text[: settings.source_char_limit],
+            source_type=section.source_type,
+            document_version=section.document_version,
+            revision_date=section.revision_date,
         )
         for i, section in enumerate(sections)
     ]

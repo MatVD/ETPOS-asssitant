@@ -415,7 +415,7 @@ def test_challenge_benchmark_expands_realistic_held_out_coverage():
     root = Path(__file__).resolve().parents[1]
     cases = load_benchmark(root / "eval" / "challenge.jsonl")
 
-    assert len(cases) == 45
+    assert len(cases) == 53
     assert {case.category for case in cases} >= {
         "natural",
         "typo",
@@ -426,7 +426,7 @@ def test_challenge_benchmark_expands_realistic_held_out_coverage():
         "partial_realistic",
         "unanswerable_realistic",
     }
-    assert sum(bool(case.history) for case in cases) == 4
+    assert sum(bool(case.history) for case in cases) == 12
     assert sum(case.answerability == "none" for case in cases) == 4
     assert sum(case.answerability == "partial" for case in cases) >= 5
 
@@ -437,7 +437,7 @@ def test_challenge_benchmark_expands_realistic_held_out_coverage():
         "news.jsonl",
         "challenge.jsonl",
     )
-    assert sum(len(load_benchmark(root / "eval" / name)) for name in managed_paths) == 120
+    assert sum(len(load_benchmark(root / "eval" / name)) for name in managed_paths) == 128
 
 
 def test_acceptance_benchmark_is_separate_and_covers_risk_categories():

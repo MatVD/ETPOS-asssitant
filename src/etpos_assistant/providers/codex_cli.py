@@ -51,6 +51,7 @@ class CodexRunMetrics:
     first_event_ms: float | None
     first_agent_message_ms: float | None
     total_ms: float
+    queue_wait_ms: float | None = None
     input_tokens: int | None = None
     cached_input_tokens: int | None = None
     output_tokens: int | None = None
@@ -294,6 +295,7 @@ class CodexCliProvider:
             first_event_ms=first_event_ms,
             first_agent_message_ms=first_agent_message_ms,
             total_ms=total_ms,
+            queue_wait_ms=0.0,
             input_tokens=usage.get("input_tokens"),
             cached_input_tokens=usage.get("cached_input_tokens"),
             output_tokens=usage.get("output_tokens"),
