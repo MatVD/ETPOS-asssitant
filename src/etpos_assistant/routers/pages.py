@@ -24,11 +24,13 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
             (session["user_id"],),
         ).fetchall()
         messages = []
+        conversation_exists = conversation_id is None
         if conversation_id is not None:
             owner = conn.execute(
                 "SELECT id FROM conversations WHERE id = ? AND user_id = ?",
                 (conversation_id, session["user_id"]),
             ).fetchone()
+            conversation_exists = owner is not None
             if owner:
                 rows = conn.execute(
                     "SELECT role, content, citations_json FROM messages WHERE conversation_id = ? ORDER BY id",
@@ -52,6 +54,7 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
         "csrf_token": session["csrf_token"],
         "conversations": conversations,
         "conversation_id": conversation_id,
+        "conversation_exists": conversation_exists,
         "messages": messages,
     }
 
@@ -70,6 +73,6 @@ def conversation(request: Request, conversation_id: int):
     if not session:
         return RedirectResponse("/login", status_code=303)
     context = _page_context(request, session, conversation_id)
-    if not any(int(c["id"]) == conversation_id for c in context["conversations"]):
+    if not context["conversation_exists"]:
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(request=request, name="chat.html", context=context)

@@ -25,7 +25,9 @@ button { cursor: pointer; }
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 17rem minmax(0,1fr); }
 .sidebar { background: #182536; color: #edf2f7; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; min-height: 0; overflow: hidden; align-self: start; }
 .sidebar-head { padding: 1rem; border-bottom: 1px solid rgba(255,255,255,.08); }
+.sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .brand { display: flex; gap: .7rem; align-items: center; text-decoration: none; font-weight: 750; }
+.sidebar-close, .mobile-menu-button, .sidebar-backdrop { display: none; }
 .new-chat { display: block; margin-top: 1rem; padding: .65rem .75rem; border: 1px solid rgba(255,255,255,.16); border-radius: .6rem; text-decoration: none; font-size: .86rem; }
 .conversation-list { padding: .6rem; overflow-y: auto; flex: 1; min-height: 0; }
 .conversation-link { display: block; text-decoration: none; padding: .66rem .7rem; margin: .14rem 0; border-radius: .55rem; color: #d9e1ea; font-size: .86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -51,7 +53,13 @@ button { cursor: pointer; }
 .message-body { line-height: 1.68; color: #243247; overflow-wrap: anywhere; }
 .message-body p:first-child { margin-top: 0; }
 .message-body p:last-child { margin-bottom: 0; }
+.message-progress { display: flex; align-items: center; gap: .5rem; min-height: 1.65rem; color: #687386; font-size: .86rem; }
+.message-progress[hidden] { display: none; }
+.message-progress::before { content: ""; flex: 0 0 auto; width: .42rem; height: .42rem; border-radius: 50%; background: currentColor; opacity: .55; }
+.message-body.streaming { white-space: pre-wrap; }
+.message-body.streaming p { margin: 0; }
 .message-status { color: #687386; font-style: italic; }
+.message.error .message-body { color: #8a2d22; }
 .message-body pre { overflow-x: auto; background: #17202e; color: #eef2f7; padding: .9rem; border-radius: .7rem; }
 .message-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 .citations { display: grid; gap: .5rem; margin-top: 1rem; }
@@ -76,11 +84,62 @@ button { cursor: pointer; }
 .image-references { margin-top: 1.5rem; }
 .image-references a { overflow-wrap: anywhere; }
 @media (max-width: 800px) {
-  .app-shell { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; min-height: auto; overflow: visible; }
-  .conversation-list { display: none; }
-  .sidebar-foot { display: none; }
-  .chat-header { padding: 1rem; }
+  body.menu-open { overflow: hidden; }
+  .app-shell { display: block; min-height: 100vh; }
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: min(86vw, 20rem);
+    height: 100dvh;
+    min-height: 0;
+    transform: translateX(-105%);
+    transition: transform .18s ease;
+    box-shadow: 18px 0 50px rgba(10,18,30,.24);
+  }
+  .app-shell.sidebar-open .sidebar { transform: translateX(0); }
+  .sidebar-close {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 0;
+    border-radius: .5rem;
+    background: transparent;
+    color: #d9e1ea;
+    font-size: 1.4rem;
+    line-height: 1;
+  }
+  .conversation-list { display: block; }
+  .sidebar-foot { display: flex; }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    border: 0;
+    padding: 0;
+    background: rgba(10,18,30,.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+  }
+  .app-shell.sidebar-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
+  .chat-header { position: sticky; top: 0; z-index: 20; padding: .85rem 1rem; }
+  .mobile-menu-button {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    border: 1px solid #d8dee7;
+    border-radius: .6rem;
+    background: transparent;
+    color: inherit;
+    font-size: 1.05rem;
+  }
   .status-badge { display: none; }
   .messages { padding: 1.25rem 1rem 9rem; }
   .composer { width: calc(100% - 1rem); margin-bottom: .5rem; }

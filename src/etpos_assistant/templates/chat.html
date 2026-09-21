@@ -1,18 +1,21 @@
 {% extends "base.html" %}
 {% block title %}ETPOS Assistant{% endblock %}
 {% block body %}
-<div class="app-shell">
-  <aside class="sidebar">
+<div class="app-shell" id="app-shell">
+  <aside class="sidebar" id="conversation-sidebar" aria-label="Navigation des conversations">
     <div class="sidebar-head">
-      <a class="brand" href="/">
-        <span class="brand-mark small" aria-hidden="true">E</span>
-        <span>ETPOS Agent</span>
-      </a>
+      <div class="sidebar-brand-row">
+        <a class="brand" href="/">
+          <span class="brand-mark small" aria-hidden="true">E</span>
+          <span>ETPOS Agent</span>
+        </a>
+        <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Fermer l’historique">×</button>
+      </div>
       <a class="new-chat" href="/">+ Nouvelle conversation</a>
     </div>
     <nav class="conversation-list" aria-label="Conversations">
       {% for conversation in conversations %}
-        <a href="/c/{{ conversation['id'] }}" class="conversation-link {% if conversation_id == conversation['id'] %}active{% endif %}">
+        <a href="/c/{{ conversation['id'] }}" data-conversation-id="{{ conversation['id'] }}" class="conversation-link {% if conversation_id == conversation['id'] %}active{% endif %}">
           {{ conversation['title'] }}
         </a>
       {% else %}
@@ -27,9 +30,14 @@
       </form>
     </div>
   </aside>
+  <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" aria-label="Fermer l’historique" tabindex="-1"></button>
 
   <main class="chat-main" data-conversation-id="{{ conversation_id or '' }}">
     <header class="chat-header">
+      <button type="button" class="mobile-menu-button" id="sidebar-toggle" aria-controls="conversation-sidebar" aria-expanded="false">
+        <span aria-hidden="true">☰</span>
+        <span class="sr-only">Ouvrir l’historique</span>
+      </button>
       <div>
         <h1>Assistant documentaire ETPOS</h1>
       </div>

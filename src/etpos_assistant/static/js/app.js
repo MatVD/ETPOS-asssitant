@@ -4,12 +4,40 @@
   const send = document.getElementById("send-button");
   const messages = document.getElementById("messages");
   const main = document.querySelector(".chat-main");
+  const shell = document.getElementById("app-shell");
+  const sidebarToggle = document.getElementById("sidebar-toggle");
+  const sidebarClose = document.getElementById("sidebar-close");
+  const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+  const conversationList = document.querySelector(".conversation-list");
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+  const setSidebarOpen = (open) => {
+    if (!shell || !sidebarToggle) return;
+    shell.classList.toggle("sidebar-open", open);
+    document.body.classList.toggle("menu-open", open);
+    sidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+
+  sidebarToggle?.addEventListener("click", () => {
+    setSidebarOpen(!shell?.classList.contains("sidebar-open"));
+  });
+  sidebarClose?.addEventListener("click", () => setSidebarOpen(false));
+  sidebarBackdrop?.addEventListener("click", () => setSidebarOpen(false));
+  conversationList?.addEventListener("click", (event) => {
+    if (event.target.closest(".conversation-link")) setSidebarOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && shell?.classList.contains("sidebar-open")) {
+      setSidebarOpen(false);
+      sidebarToggle?.focus();
+    }
+  });
 
   document.querySelectorAll(".suggestion").forEach((button) => {
     button.addEventListener("click", () => {
       if (!input) return;
       input.value = button.textContent || "";
+      resize();
       input.focus();
     });
   });
@@ -31,6 +59,30 @@
     input.style.height = `${Math.min(input.scrollHeight, 190)}px`;
   };
   input.addEventListener("input", resize);
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    if (!send.disabled) form.requestSubmit();
+  });
+
+  const isNearBottom = (threshold = 180) => (
+    window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - threshold
+  );
+
+  const scrollToBottom = (behavior = "auto") => {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
+  };
+
+  const streamingPreview = (markdown) => (
+    markdown
+      .replace(/^\s*```[^\n]*$/gm, "")
+      .replace(/`([^`\n]+)`/g, "$1")
+      .replace(/\*\*/g, "")
+      .replace(/__/g, "")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^>\s?/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "• ")
+  );
 
   function addMessage(role, text) {
     document.getElementById("empty-state")?.remove();
@@ -39,15 +91,38 @@
     const label = document.createElement("div");
     label.className = "message-label";
     label.textContent = role === "user" ? "Vous" : "ETPOS Assistant";
+    const progress = document.createElement("div");
+    progress.className = "message-progress";
+    progress.hidden = true;
+    progress.setAttribute("role", "status");
     const body = document.createElement("div");
     body.className = "message-body";
     const p = document.createElement("p");
     p.textContent = text;
     body.appendChild(p);
-    article.append(label, body);
+    article.append(label, progress, body);
     messages.appendChild(article);
-    article.scrollIntoView({ behavior: "smooth", block: "end" });
-    return { article, body, paragraph: p };
+    return {
+      article,
+      body,
+      paragraph: p,
+      progress,
+      startedAt: performance.now(),
+      firstTextAt: null,
+    };
+  }
+
+  function setAssistantStatus(assistant, text, stage = "") {
+    assistant.progress.textContent = text;
+    assistant.progress.dataset.stage = stage;
+    assistant.progress.hidden = !text;
+    assistant.body.hidden = Boolean(text);
+  }
+
+  function showAssistantContent(assistant) {
+    assistant.progress.hidden = true;
+    assistant.progress.textContent = "";
+    assistant.body.hidden = false;
   }
 
   function renderCitations(article, citations) {
@@ -68,6 +143,28 @@
     article.appendChild(wrap);
   }
 
+  function syncConversationList(conversationId, title = "") {
+    if (!conversationList) return;
+    const id = String(conversationId);
+    const links = Array.from(conversationList.querySelectorAll(".conversation-link"));
+    links.forEach((link) => link.classList.remove("active"));
+    let link = links.find((item) => item.dataset.conversationId === id);
+
+    if (!link) {
+      link = document.createElement("a");
+      link.className = "conversation-link";
+      link.dataset.conversationId = id;
+      link.href = `/c/${id}`;
+      link.textContent = title || "Nouvelle conversation";
+    } else if (title) {
+      link.textContent = title;
+    }
+
+    document.querySelector(".sidebar-empty")?.remove();
+    link.classList.add("active");
+    conversationList.prepend(link);
+  }
+
   async function consumeSSE(response, assistant) {
     if (!response.body) throw new Error("Flux indisponible");
     const reader = response.body.getReader();
@@ -85,42 +182,73 @@
         const line = frame.split("\n").find((item) => item.startsWith("data:"));
         if (!line) continue;
         const event = JSON.parse(line.slice(5).trim());
+        const followResponse = isNearBottom();
+
         if (event.type === "meta") {
           main.dataset.conversationId = String(event.conversation_id);
+          syncConversationList(event.conversation_id, event.conversation_title || "");
           if (location.pathname === "/") history.replaceState({}, "", `/c/${event.conversation_id}`);
         } else if (event.type === "status") {
-          assistant.paragraph.textContent = event.text || "";
-          assistant.paragraph.classList.add("message-status");
+          setAssistantStatus(assistant, event.text || "", event.stage || "");
         } else if (event.type === "delta") {
-          if (assistant.paragraph.classList.contains("message-status")) {
-            assistant.paragraph.classList.remove("message-status");
-            assistant.paragraph.textContent = "";
+          if (assistant.firstTextAt === null) {
+            assistant.firstTextAt = performance.now();
+            assistant.article.dataset.firstTextMs = String(
+              Math.round(assistant.firstTextAt - assistant.startedAt),
+            );
           }
+          showAssistantContent(assistant);
+          assistant.body.classList.add("streaming");
           accumulated += event.text || "";
-          assistant.paragraph.textContent = accumulated;
-          assistant.article.scrollIntoView({ behavior: "smooth", block: "end" });
+          assistant.paragraph.textContent = streamingPreview(accumulated);
         } else if (event.type === "done") {
-          assistant.paragraph.classList.remove("message-status");
+          showAssistantContent(assistant);
+          assistant.body.classList.remove("streaming");
           assistant.body.innerHTML = event.html || "";
+          assistant.article.dataset.completeMs = String(
+            Math.round(performance.now() - assistant.startedAt),
+          );
+          assistant.article.removeAttribute("aria-busy");
           renderCitations(assistant.article, event.citations || []);
         } else if (event.type === "error") {
-          assistant.paragraph.classList.remove("message-status");
-          assistant.paragraph.textContent = event.message || "Erreur de génération.";
+          showAssistantContent(assistant);
+          assistant.body.classList.remove("streaming");
+          assistant.paragraph.textContent = event.message || "La réponse n’a pas pu être générée.";
           assistant.article.classList.add("error");
+          assistant.article.removeAttribute("aria-busy");
+        }
+
+        if (followResponse && ["status", "delta", "done", "error"].includes(event.type)) {
+          scrollToBottom();
         }
       }
     }
   }
 
+  const navigationEntry = performance.getEntriesByType("navigation")[0];
+  if (
+    main.dataset.conversationId
+    && messages.querySelector(".message")
+    && navigationEntry?.type !== "back_forward"
+  ) {
+    requestAnimationFrame(() => scrollToBottom());
+  }
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if (!text) return;
+    if (!text || send.disabled) return;
+
     addMessage("user", text);
     const assistant = addMessage("assistant", "");
+    assistant.article.setAttribute("aria-busy", "true");
+    setAssistantStatus(assistant, "Je vérifie la documentation ETPOS…", "requesting");
     input.value = "";
     resize();
     send.disabled = true;
+    form.setAttribute("aria-busy", "true");
+    input.focus({ preventScroll: true });
+    scrollToBottom("smooth");
 
     const conversationId = main.dataset.conversationId ? Number(main.dataset.conversationId) : null;
     try {
@@ -132,12 +260,15 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await consumeSSE(response, assistant);
     } catch (error) {
-      assistant.paragraph.textContent = "La requête a échoué. Vérifie la connexion et la configuration de l'assistant.";
+      showAssistantContent(assistant);
+      assistant.body.classList.remove("streaming");
+      assistant.paragraph.textContent = "La requête n’a pas abouti. Vérifiez votre connexion puis réessayez.";
       assistant.article.classList.add("error");
+      assistant.article.removeAttribute("aria-busy");
       console.error(error);
     } finally {
       send.disabled = false;
-      input.focus();
+      form.removeAttribute("aria-busy");
     }
   });
 })();

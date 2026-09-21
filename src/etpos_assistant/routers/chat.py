@@ -50,7 +50,9 @@ async def chat(request: Request, payload: ChatRequest):
     session = require_api_session(request)
     require_csrf(request, session)
     question = payload.message.strip()
+    is_new_conversation = payload.conversation_id is None
     conversation_id = _ensure_conversation(session["user_id"], payload.conversation_id, question)
+    conversation_title = re.sub(r"\s+", " ", question).strip()[:70] or "Nouvelle conversation"
     now = datetime.now(UTC).isoformat()
     with app_db() as conn:
         conn.execute(
@@ -60,19 +62,22 @@ async def chat(request: Request, payload: ChatRequest):
         conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
 
     async def events():
-        final: dict | None = None
-        yield _sse({"type": "meta", "conversation_id": conversation_id})
+        meta = {"type": "meta", "conversation_id": conversation_id}
+        if is_new_conversation:
+            meta["conversation_title"] = conversation_title
+        yield _sse(meta)
         try:
             async for event in stream_chat(conversation_id, question):
                 if event.get("type") == "done":
-                    final = event
+                    save_assistant_message(conversation_id, event["text"], event.get("citations", []))
                 yield _sse(event)
         except Exception:
             logger.exception("Erreur pendant la génération")
-            yield _sse({"type": "error", "message": "La génération a échoué. Réessaie ou vérifie la configuration du provider."})
+            yield _sse({
+                "type": "error",
+                "message": "La réponse n’a pas pu être générée. Vous pouvez réessayer.",
+            })
             return
-        if final:
-            save_assistant_message(conversation_id, final["text"], final.get("citations", []))
 
     return StreamingResponse(
         events(),

@@ -115,12 +115,12 @@ async def test_stream_chat_exposes_real_search_and_generation_statuses(monkeypat
     assert events[0] == {
         "type": "status",
         "stage": "searching",
-        "text": "Recherche dans la documentation ETPOS…",
+        "text": "Je vérifie la documentation ETPOS…",
     }
     assert events[1] == {
         "type": "status",
         "stage": "generating",
-        "text": "Sources trouvées. Génération de la réponse…",
+        "text": "Je prépare la réponse…",
     }
     assert any(event["type"] == "delta" for event in events[2:-1])
     assert events[-1]["type"] == "done"

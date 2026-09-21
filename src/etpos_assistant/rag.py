@@ -163,7 +163,7 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
     yield {
         "type": "status",
         "stage": "searching",
-        "text": "Recherche dans la documentation ETPOS…",
+        "text": "Je vérifie la documentation ETPOS…",
     }
     retrieval_started = time.perf_counter()
     sections = search_sections(retrieval_question, limit=settings.retrieval_limit)
@@ -212,7 +212,7 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
     yield {
         "type": "status",
         "stage": "generating",
-        "text": "Sources trouvées. Génération de la réponse…",
+        "text": "Je prépare la réponse…",
     }
 
     provider = get_provider()
