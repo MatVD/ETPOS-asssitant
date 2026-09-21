@@ -6,16 +6,29 @@
   const messages = document.getElementById("messages");
   const main = document.querySelector(".chat-main");
   const shell = document.getElementById("app-shell");
+  const sidebar = document.getElementById("conversation-sidebar");
   const sidebarToggle = document.getElementById("sidebar-toggle");
   const sidebarClose = document.getElementById("sidebar-close");
   const sidebarBackdrop = document.getElementById("sidebar-backdrop");
   const conversationList = document.querySelector(".conversation-list");
   const historySearch = document.getElementById("history-search");
+  const announcer = document.getElementById("chat-announcer");
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const mobileSidebar = window.matchMedia("(max-width: 800px)");
   let conversationLinks = conversationList
     ? Array.from(conversationList.querySelectorAll(".conversation-link"))
     : [];
   let activeGeneration = null;
+  let sidebarPreviousFocus = null;
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+  const announce = (message) => {
+    if (!announcer) return;
+    announcer.textContent = "";
+    requestAnimationFrame(() => {
+      announcer.textContent = message;
+    });
+  };
 
   const normalizeHistoryText = (value) => (
     String(value || "")
@@ -104,9 +117,27 @@
 
   const setSidebarOpen = (open) => {
     if (!shell || !sidebarToggle) return;
+    const wasOpen = shell.classList.contains("sidebar-open");
     shell.classList.toggle("sidebar-open", open);
     document.body.classList.toggle("menu-open", open);
     sidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
+
+    if (open && !wasOpen && mobileSidebar.matches) {
+      sidebarPreviousFocus = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : sidebarToggle;
+      main?.setAttribute("inert", "");
+      requestAnimationFrame(() => {
+        (historySearch || sidebarClose)?.focus({ preventScroll: true });
+      });
+    } else if (!open && wasOpen) {
+      main?.removeAttribute("inert");
+      const target = sidebarPreviousFocus?.isConnected
+        ? sidebarPreviousFocus
+        : sidebarToggle;
+      sidebarPreviousFocus = null;
+      requestAnimationFrame(() => target?.focus({ preventScroll: true }));
+    }
   };
 
   sidebarToggle?.addEventListener("click", () => {
@@ -117,10 +148,40 @@
   conversationList?.addEventListener("click", (event) => {
     if (event.target.closest(".conversation-link")) setSidebarOpen(false);
   });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && shell?.classList.contains("sidebar-open")) {
+  mobileSidebar.addEventListener("change", (event) => {
+    if (!event.matches && shell?.classList.contains("sidebar-open")) {
       setSidebarOpen(false);
-      sidebarToggle?.focus();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!shell?.classList.contains("sidebar-open")) return;
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setSidebarOpen(false);
+      return;
+    }
+
+    if (event.key === "Tab" && sidebar) {
+      const focusable = Array.from(
+        sidebar.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (!sidebar.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      }
     }
   });
 
@@ -161,7 +222,10 @@
   );
 
   const scrollToBottom = (behavior = "auto") => {
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: reduceMotion.matches ? "auto" : behavior,
+    });
   };
 
   const streamingPreview = (markdown) => (
@@ -238,19 +302,22 @@
     body.appendChild(paragraph);
 
     article.querySelector(".message-actions")?.remove();
+    let retry = null;
     if (main.dataset.conversationId) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
-      const retry = document.createElement("button");
+      retry = document.createElement("button");
       retry.type = "button";
       retry.className = "retry-button";
       retry.textContent = "Réessayer";
       actions.appendChild(retry);
       article.appendChild(actions);
     }
+    return retry;
   }
 
   function setGenerating(active) {
+    const stopHadFocus = document.activeElement === stop;
     send.disabled = active;
     send.hidden = active;
     stop.hidden = !active;
@@ -259,6 +326,9 @@
       form.setAttribute("aria-busy", "true");
     } else {
       form.removeAttribute("aria-busy");
+      if (stopHadFocus) {
+        requestAnimationFrame(() => input.focus({ preventScroll: true }));
+      }
     }
   }
 
@@ -381,7 +451,10 @@
   function syncConversationList(conversationId, title = "") {
     if (!conversationList) return;
     const id = String(conversationId);
-    conversationLinks.forEach((link) => link.classList.remove("active"));
+    conversationLinks.forEach((link) => {
+      link.classList.remove("active");
+      link.removeAttribute("aria-current");
+    });
     let link = conversationLinks.find((item) => item.dataset.conversationId === id);
     const isNew = !link;
 
@@ -397,6 +470,7 @@
 
     link.dataset.updatedAt = new Date().toISOString();
     link.classList.add("active");
+    link.setAttribute("aria-current", "page");
     conversationLinks = [
       link,
       ...conversationLinks.filter((item) => item !== link),
@@ -454,11 +528,11 @@
           renderAnswerStatus(assistant.article, event.answer_status || "");
           renderCitations(assistant.article, event.citations || []);
           enhanceAssistantMessage(assistant.article);
+          announce("Réponse terminée.");
         } else if (event.type === "error") {
-          renderRetryState(
-            assistant.article,
-            event.message || "La réponse n’a pas pu être générée.",
-          );
+          const message = event.message || "La réponse n’a pas pu être générée.";
+          renderRetryState(assistant.article, message);
+          announce(message);
         }
 
         if (followResponse && ["status", "delta", "done", "error"].includes(event.type)) {
@@ -501,12 +575,13 @@
       await consumeSSE(response, assistant);
     } catch (error) {
       if (error?.name === "AbortError" && generation.stoppedByUser) {
-        renderRetryState(assistant.article, "Réponse interrompue.");
+        const retry = renderRetryState(assistant.article, "Réponse interrompue.");
+        announce("Réponse interrompue. Vous pouvez réessayer.");
+        requestAnimationFrame(() => retry?.focus({ preventScroll: true }));
       } else if (error?.name !== "AbortError") {
-        renderRetryState(
-          assistant.article,
-          "La requête n’a pas abouti. Vérifiez votre connexion puis réessayez.",
-        );
+        const message = "La requête n’a pas abouti. Vérifiez votre connexion puis réessayez.";
+        renderRetryState(assistant.article, message);
+        announce(message);
         console.error(error);
       }
     } finally {

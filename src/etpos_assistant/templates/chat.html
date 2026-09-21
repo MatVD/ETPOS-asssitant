@@ -14,16 +14,17 @@
       <a class="new-chat" href="/">+ Nouvelle conversation</a>
       <div class="history-search">
         <label for="history-search" class="sr-only">Rechercher dans l’historique</label>
-        <input id="history-search" type="search" placeholder="Rechercher dans l’historique" autocomplete="off">
+        <input id="history-search" type="search" placeholder="Rechercher dans l’historique" autocomplete="off" aria-controls="conversation-list">
       </div>
     </div>
-    <nav class="conversation-list" aria-label="Conversations">
+    <nav class="conversation-list" id="conversation-list" aria-label="Conversations">
       {% for conversation in conversations %}
         <a
           href="/c/{{ conversation['id'] }}"
           data-conversation-id="{{ conversation['id'] }}"
           data-updated-at="{{ conversation['updated_at'] }}"
           class="conversation-link {% if conversation_id == conversation['id'] %}active{% endif %}"
+          {% if conversation_id == conversation['id'] %}aria-current="page"{% endif %}
         >
           {{ conversation['title'] }}
         </a>
@@ -41,7 +42,7 @@
   </aside>
   <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" aria-label="Fermer l’historique" tabindex="-1"></button>
 
-  <main class="chat-main" data-conversation-id="{{ conversation_id or '' }}">
+  <main class="chat-main" id="main-content" tabindex="-1" data-conversation-id="{{ conversation_id or '' }}">
     <header class="chat-header">
       <button type="button" class="mobile-menu-button" id="sidebar-toggle" aria-controls="conversation-sidebar" aria-expanded="false">
         <span aria-hidden="true">☰</span>
@@ -52,7 +53,8 @@
       </div>
     </header>
 
-    <section id="messages" class="messages" aria-live="polite">
+    <section id="messages" class="messages" aria-label="Conversation">
+      <div id="chat-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       {% if not messages %}
         <div class="empty-state" id="empty-state">
           <div class="empty-icon" aria-hidden="true">?</div>
@@ -105,10 +107,10 @@
 
     <form id="chat-form" class="composer">
       <label for="message-input" class="sr-only">Question</label>
-      <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" required></textarea>
+      <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" aria-describedby="composer-note" required></textarea>
       <button id="send-button" type="submit" class="send-button">Envoyer</button>
       <button id="stop-button" type="button" class="stop-button" hidden>Arrêter</button>
-      <p class="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
+      <p class="composer-note" id="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
     </form>
   </main>
 </div>
