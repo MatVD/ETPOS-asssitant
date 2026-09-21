@@ -20,7 +20,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / 
 def _page_context(request: Request, session, conversation_id: int | None = None) -> dict:
     with app_db() as conn:
         conversations = conn.execute(
-            "SELECT id, title, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50",
+            "SELECT id, title, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC",
             (session["user_id"],),
         ).fetchall()
         messages = []

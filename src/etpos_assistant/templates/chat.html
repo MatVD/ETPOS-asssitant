@@ -12,10 +12,19 @@
         <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Fermer l’historique">×</button>
       </div>
       <a class="new-chat" href="/">+ Nouvelle conversation</a>
+      <div class="history-search">
+        <label for="history-search" class="sr-only">Rechercher dans l’historique</label>
+        <input id="history-search" type="search" placeholder="Rechercher dans l’historique" autocomplete="off">
+      </div>
     </div>
     <nav class="conversation-list" aria-label="Conversations">
       {% for conversation in conversations %}
-        <a href="/c/{{ conversation['id'] }}" data-conversation-id="{{ conversation['id'] }}" class="conversation-link {% if conversation_id == conversation['id'] %}active{% endif %}">
+        <a
+          href="/c/{{ conversation['id'] }}"
+          data-conversation-id="{{ conversation['id'] }}"
+          data-updated-at="{{ conversation['updated_at'] }}"
+          class="conversation-link {% if conversation_id == conversation['id'] %}active{% endif %}"
+        >
           {{ conversation['title'] }}
         </a>
       {% else %}

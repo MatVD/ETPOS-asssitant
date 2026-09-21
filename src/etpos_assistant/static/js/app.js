@@ -9,7 +9,96 @@
   const sidebarClose = document.getElementById("sidebar-close");
   const sidebarBackdrop = document.getElementById("sidebar-backdrop");
   const conversationList = document.querySelector(".conversation-list");
+  const historySearch = document.getElementById("history-search");
+  let conversationLinks = conversationList
+    ? Array.from(conversationList.querySelectorAll(".conversation-link"))
+    : [];
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+  const normalizeHistoryText = (value) => (
+    String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("fr-FR")
+  );
+
+  const conversationGroupLabel = (isoDate) => {
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) return "Plus ancien";
+
+    const now = new Date();
+    const localDay = (value) => Date.UTC(
+      value.getFullYear(),
+      value.getMonth(),
+      value.getDate(),
+    );
+    const days = Math.round((localDay(now) - localDay(date)) / 86400000);
+
+    if (days <= 0) return "Aujourd’hui";
+    if (days === 1) return "Hier";
+    if (days <= 7) return "7 derniers jours";
+    if (days <= 30) return "30 derniers jours";
+    return "Plus ancien";
+  };
+
+  const rebuildConversationHistory = () => {
+    if (!conversationList) return;
+
+    const links = conversationLinks;
+    const query = normalizeHistoryText(historySearch?.value.trim());
+    const matching = links.filter((link) => (
+      !query || normalizeHistoryText(link.textContent).includes(query)
+    ));
+
+    conversationList.replaceChildren();
+
+    if (links.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "sidebar-empty";
+      empty.textContent = "Aucune conversation.";
+      conversationList.appendChild(empty);
+      return;
+    }
+
+    if (matching.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "sidebar-empty";
+      empty.textContent = "Aucune conversation trouvée.";
+      conversationList.appendChild(empty);
+      return;
+    }
+
+    const groups = new Map();
+    matching.forEach((link) => {
+      const updatedAt = link.dataset.updatedAt || "";
+      const label = conversationGroupLabel(updatedAt);
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label).push(link);
+
+      const date = new Date(updatedAt);
+      if (!Number.isNaN(date.getTime())) {
+        const formatted = new Intl.DateTimeFormat("fr-FR", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(date);
+        link.title = `${link.textContent.trim()} — ${formatted}`;
+      }
+    });
+
+    groups.forEach((groupLinks, label) => {
+      const section = document.createElement("section");
+      section.className = "conversation-group";
+      const heading = document.createElement("h2");
+      heading.className = "conversation-group-title";
+      heading.textContent = label;
+      section.appendChild(heading);
+      groupLinks.forEach((link) => section.appendChild(link));
+      conversationList.appendChild(section);
+    });
+  };
+
+  historySearch?.addEventListener("input", rebuildConversationHistory);
+  rebuildConversationHistory();
 
   const setSidebarOpen = (open) => {
     if (!shell || !sidebarToggle) return;
@@ -244,9 +333,9 @@
   function syncConversationList(conversationId, title = "") {
     if (!conversationList) return;
     const id = String(conversationId);
-    const links = Array.from(conversationList.querySelectorAll(".conversation-link"));
-    links.forEach((link) => link.classList.remove("active"));
-    let link = links.find((item) => item.dataset.conversationId === id);
+    conversationLinks.forEach((link) => link.classList.remove("active"));
+    let link = conversationLinks.find((item) => item.dataset.conversationId === id);
+    const isNew = !link;
 
     if (!link) {
       link = document.createElement("a");
@@ -258,9 +347,14 @@
       link.textContent = title;
     }
 
-    document.querySelector(".sidebar-empty")?.remove();
+    link.dataset.updatedAt = new Date().toISOString();
     link.classList.add("active");
-    conversationList.prepend(link);
+    conversationLinks = [
+      link,
+      ...conversationLinks.filter((item) => item !== link),
+    ];
+    if (isNew && historySearch) historySearch.value = "";
+    rebuildConversationHistory();
   }
 
   async function consumeSSE(response, assistant) {

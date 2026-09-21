@@ -68,7 +68,7 @@ def test_init_app_db_adds_answer_status_to_legacy_messages(monkeypatch, tmp_path
     assert "answer_status" in columns
 
 
-def test_page_context_keeps_owned_conversation_accessible_outside_recent_50(monkeypatch, tmp_path):
+def test_page_context_keeps_full_conversation_history_accessible(monkeypatch, tmp_path):
     monkeypatch.setattr(db_module, "settings", _settings(tmp_path))
     db_module.init_app_db()
 
@@ -109,8 +109,8 @@ def test_page_context_keeps_owned_conversation_accessible_outside_recent_50(monk
         int(first_id),
     )
 
-    assert len(context["conversations"]) == 50
-    assert all(int(row["id"]) != int(first_id) for row in context["conversations"])
+    assert len(context["conversations"]) == 51
+    assert any(int(row["id"]) == int(first_id) for row in context["conversations"])
     assert context["conversation_exists"] is True
     assert [message["content"] for message in context["messages"]] == [
         "Ancienne question",
