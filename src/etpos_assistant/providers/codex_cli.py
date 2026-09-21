@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .base import SourceContext
-from .prompting import AnswerStatusGate, build_prompt
+from .prompting import ANSWER_STATUSES, AnswerStatusGate, build_prompt
 from ..config import settings
 
 
@@ -200,6 +200,7 @@ def parse_turn_usage(raw_line: str) -> dict[str, int] | None:
 class CodexCliProvider:
     def __init__(self) -> None:
         self.last_metrics: CodexRunMetrics | None = None
+        self.last_answer_status: str | None = None
 
     async def stream_answer(
         self,
@@ -213,6 +214,7 @@ class CodexCliProvider:
                 f"Codex CLI introuvable ({settings.codex_binary}). Installe Codex puis exécute `codex login`."
             )
 
+        self.last_answer_status = None
         run_started = time.perf_counter()
         prompt_started = time.perf_counter()
         prompt = build_prompt(question, sources, history)
@@ -287,6 +289,7 @@ class CodexCliProvider:
         gate = AnswerStatusGate()
         output_chunks = gate.feed(final_messages[-1])
         output_chunks.extend(gate.finish())
+        self.last_answer_status = gate.status if gate.status in ANSWER_STATUSES else None
 
         self.last_metrics = CodexRunMetrics(
             prompt_chars=len(prompt),

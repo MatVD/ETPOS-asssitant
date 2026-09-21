@@ -69,7 +69,12 @@ async def chat(request: Request, payload: ChatRequest):
         try:
             async for event in stream_chat(conversation_id, question):
                 if event.get("type") == "done":
-                    save_assistant_message(conversation_id, event["text"], event.get("citations", []))
+                    save_assistant_message(
+                        conversation_id,
+                        event["text"],
+                        event.get("citations", []),
+                        event.get("answer_status"),
+                    )
                 yield _sse(event)
         except Exception:
             logger.exception("Erreur pendant la génération")

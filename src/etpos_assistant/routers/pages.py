@@ -33,7 +33,12 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
             conversation_exists = owner is not None
             if owner:
                 rows = conn.execute(
-                    "SELECT role, content, citations_json FROM messages WHERE conversation_id = ? ORDER BY id",
+                    """
+                    SELECT role, content, citations_json, answer_status
+                    FROM messages
+                    WHERE conversation_id = ?
+                    ORDER BY id
+                    """,
                     (conversation_id,),
                 ).fetchall()
                 for row in rows:
@@ -47,6 +52,7 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
                             "content": row["content"],
                             "html": render_safe_markdown(row["content"]) if row["role"] == "assistant" else None,
                             "citations": citations,
+                            "answer_status": row["answer_status"] if row["role"] == "assistant" else None,
                         }
                     )
     return {

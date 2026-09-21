@@ -125,22 +125,120 @@
     assistant.body.hidden = false;
   }
 
+  function renderAnswerStatus(article, status) {
+    article.querySelector(".answer-status")?.remove();
+    if (!["partial", "none"].includes(status)) return;
+
+    const badge = document.createElement("div");
+    badge.className = `answer-status ${status}`;
+    badge.textContent = status === "partial"
+      ? "Documentation partielle"
+      : "Documentation insuffisante";
+    article.querySelector(".message-label")?.after(badge);
+  }
+
   function renderCitations(article, citations) {
+    article.querySelector(".citations")?.remove();
     if (!Array.isArray(citations) || citations.length === 0) return;
-    const wrap = document.createElement("div");
-    wrap.className = "citations";
+
+    const details = document.createElement("details");
+    details.className = "citations";
+    const summary = document.createElement("summary");
+    summary.append("Sources ");
+    const count = document.createElement("span");
+    count.className = "citation-count";
+    count.textContent = String(citations.length);
+    summary.appendChild(count);
+
+    const list = document.createElement("div");
+    list.className = "citation-list";
     citations.forEach((citation) => {
       const link = document.createElement("a");
       link.className = "citation-card";
+      link.dataset.sourceId = citation.source_id;
       link.href = citation.internal_url;
       const strong = document.createElement("strong");
       strong.textContent = `${citation.source_id} — ${citation.heading_path || citation.title}`;
       const meta = document.createElement("span");
       meta.textContent = `${citation.document_name}${citation.version ? ` · ${citation.version}` : ""}`;
       link.append(strong, meta);
-      wrap.appendChild(link);
+      list.appendChild(link);
     });
-    article.appendChild(wrap);
+
+    details.append(summary, list);
+    article.appendChild(details);
+  }
+
+  function linkCitationMarkers(article) {
+    const body = article.querySelector(".message-body");
+    if (!body) return;
+
+    const sources = new Map(
+      Array.from(article.querySelectorAll(".citation-card[data-source-id]"))
+        .map((link) => [link.dataset.sourceId, link.getAttribute("href")]),
+    );
+    if (sources.size === 0) return;
+
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const value = node.nodeValue || "";
+        const parent = node.parentElement;
+        if (!/\[S\d+\]/.test(value) || parent?.closest("a, code, pre")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach((node) => {
+      const text = node.nodeValue || "";
+      const fragment = document.createDocumentFragment();
+      const pattern = /\[(S\d+)\]/g;
+      let cursor = 0;
+      let match;
+
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > cursor) {
+          fragment.append(text.slice(cursor, match.index));
+        }
+        const href = sources.get(match[1]);
+        if (href) {
+          const link = document.createElement("a");
+          link.className = "citation-marker";
+          link.href = href;
+          link.textContent = match[0];
+          link.setAttribute("aria-label", `Voir la source ${match[1]}`);
+          fragment.appendChild(link);
+        } else {
+          fragment.append(match[0]);
+        }
+        cursor = pattern.lastIndex;
+      }
+
+      if (cursor > 0) {
+        if (cursor < text.length) fragment.append(text.slice(cursor));
+        node.replaceWith(fragment);
+      }
+    });
+  }
+
+  function decorateMenuPaths(article) {
+    article.querySelectorAll(".message-body p").forEach((paragraph) => {
+      const first = paragraph.firstElementChild;
+      if (
+        first?.tagName === "STRONG"
+        && /^chemin\s*:?$/i.test((first.textContent || "").trim())
+      ) {
+        paragraph.classList.add("menu-path");
+      }
+    });
+  }
+
+  function enhanceAssistantMessage(article) {
+    linkCitationMarkers(article);
+    decorateMenuPaths(article);
   }
 
   function syncConversationList(conversationId, title = "") {
@@ -209,7 +307,9 @@
             Math.round(performance.now() - assistant.startedAt),
           );
           assistant.article.removeAttribute("aria-busy");
+          renderAnswerStatus(assistant.article, event.answer_status || "");
           renderCitations(assistant.article, event.citations || []);
+          enhanceAssistantMessage(assistant.article);
         } else if (event.type === "error") {
           showAssistantContent(assistant);
           assistant.body.classList.remove("streaming");
@@ -224,6 +324,8 @@
       }
     }
   }
+
+  document.querySelectorAll(".message.assistant").forEach(enhanceAssistantMessage);
 
   const navigationEntry = performance.getEntriesByType("navigation")[0];
   if (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from contextlib import suppress
 from types import SimpleNamespace
 
@@ -37,6 +38,36 @@ def _request() -> Request:
     )
 
 
+def test_init_app_db_adds_answer_status_to_legacy_messages(monkeypatch, tmp_path):
+    test_settings = _settings(tmp_path)
+    monkeypatch.setattr(db_module, "settings", test_settings)
+    test_settings.ensure_dirs()
+
+    with sqlite3.connect(test_settings.app_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                citations_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+    db_module.init_app_db()
+
+    with db_module.app_db() as conn:
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+
+    assert "answer_status" in columns
+
+
 def test_page_context_keeps_owned_conversation_accessible_outside_recent_50(monkeypatch, tmp_path):
     monkeypatch.setattr(db_module, "settings", _settings(tmp_path))
     db_module.init_app_db()
@@ -63,6 +94,14 @@ def test_page_context_keeps_owned_conversation_accessible_outside_recent_50(monk
             "INSERT INTO messages(conversation_id, role, content, citations_json, created_at) VALUES (?, 'user', ?, '[]', ?)",
             (first_id, "Ancienne question", "2026-09-21T00:00:01+00:00"),
         )
+        conn.execute(
+            """
+            INSERT INTO messages(
+                conversation_id, role, content, citations_json, answer_status, created_at
+            ) VALUES (?, 'assistant', ?, '[]', 'partial', ?)
+            """,
+            (first_id, "Réponse partielle", "2026-09-21T00:00:02+00:00"),
+        )
 
     context = _page_context(
         _request(),
@@ -73,7 +112,11 @@ def test_page_context_keeps_owned_conversation_accessible_outside_recent_50(monk
     assert len(context["conversations"]) == 50
     assert all(int(row["id"]) != int(first_id) for row in context["conversations"])
     assert context["conversation_exists"] is True
-    assert [message["content"] for message in context["messages"]] == ["Ancienne question"]
+    assert [message["content"] for message in context["messages"]] == [
+        "Ancienne question",
+        "Réponse partielle",
+    ]
+    assert context["messages"][1]["answer_status"] == "partial"
 
 
 @pytest.mark.asyncio
@@ -101,15 +144,17 @@ async def test_chat_persists_assistant_before_done_event(monkeypatch, tmp_path):
             "text": "Réponse [S1]",
             "html": "<p>Réponse [S1]</p>",
             "citations": [],
+            "answer_status": "partial",
         }
 
     monkeypatch.setattr(chat_module, "stream_chat", fake_stream_chat)
 
     persisted = {"done": False}
 
-    def fake_save(_conversation_id, text, citations):
+    def fake_save(_conversation_id, text, citations, answer_status):
         assert text == "Réponse [S1]"
         assert citations == []
+        assert answer_status == "partial"
         persisted["done"] = True
 
     monkeypatch.setattr(chat_module, "save_assistant_message", fake_save)

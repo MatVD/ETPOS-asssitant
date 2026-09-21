@@ -112,6 +112,8 @@ def test_prompt_includes_document_type_version_and_revision_metadata():
     assert 'type="manual"' in prompt
     assert 'version="V5.34"' in prompt
     assert 'revision_date="2026-01-30"' in prompt
+    assert "**Chemin :**" in prompt
+    assert "N'invente pas de chemin" in prompt
 
 
 def test_answer_status_gate_hides_marker_and_preserves_streaming():

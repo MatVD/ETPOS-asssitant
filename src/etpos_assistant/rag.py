@@ -12,7 +12,7 @@ from .config import settings
 from .db import app_db
 from .markdown import render_safe_markdown
 from .providers import CodexAppServerProvider, CodexCliProvider, MockProvider, SourceContext
-from .providers.prompting import ABSTENTION_TEXT
+from .providers.prompting import ABSTENTION_TEXT, ANSWER_STATUSES
 from .retrieval import RetrievedSection, search_sections
 from .vocabulary import analyze_query, normalize_domain_text
 
@@ -193,6 +193,7 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
             "text": ABSTENTION,
             "html": render_safe_markdown(ABSTENTION),
             "citations": [],
+            "answer_status": "none",
         }
         return
 
@@ -228,6 +229,8 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
             break
         yield {"type": "delta", "text": chunk}
     generation_latency_ms = (time.perf_counter() - generation_started) * 1000.0
+    provider_status = getattr(provider, "last_answer_status", None)
+    answer_status = provider_status if provider_status in ANSWER_STATUSES else None
 
     finalization_started = time.perf_counter()
     answer, citations = finalize_answer("".join(chunks), sections)
@@ -248,6 +251,7 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
         "question_chars": len(question),
         "retrieval_question_chars": len(retrieval_question),
         "answer_chars": len(answer),
+        "answer_status": answer_status,
     }
     provider_metrics = getattr(provider, "last_metrics", None)
     if provider_metrics is not None and hasattr(provider_metrics, "as_dict"):
@@ -259,14 +263,31 @@ async def stream_chat(conversation_id: int, question: str) -> AsyncIterator[dict
         "text": answer,
         "html": html,
         "citations": citations,
+        "answer_status": answer_status,
     }
 
 
-def save_assistant_message(conversation_id: int, text: str, citations: list[dict]) -> None:
+def save_assistant_message(
+    conversation_id: int,
+    text: str,
+    citations: list[dict],
+    answer_status: str | None = None,
+) -> None:
     now = datetime.now(UTC).isoformat()
+    normalized_status = answer_status if answer_status in ANSWER_STATUSES else None
     with app_db() as conn:
         conn.execute(
-            "INSERT INTO messages(conversation_id, role, content, citations_json, created_at) VALUES (?, 'assistant', ?, ?, ?)",
-            (conversation_id, text, json.dumps(citations, ensure_ascii=False), now),
+            """
+            INSERT INTO messages(
+                conversation_id, role, content, citations_json, answer_status, created_at
+            ) VALUES (?, 'assistant', ?, ?, ?, ?)
+            """,
+            (
+                conversation_id,
+                text,
+                json.dumps(citations, ensure_ascii=False),
+                normalized_status,
+                now,
+            ),
         )
         conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))

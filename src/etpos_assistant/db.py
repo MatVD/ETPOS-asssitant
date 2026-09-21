@@ -88,11 +88,18 @@ def init_app_db() -> None:
                 role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
                 content TEXT NOT NULL,
                 citations_json TEXT NOT NULL DEFAULT '[]',
+                answer_status TEXT,
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id);
             """
         )
+        message_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "answer_status" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN answer_status TEXT")
 
 
 def init_docs_db(path: Path | None = None) -> None:

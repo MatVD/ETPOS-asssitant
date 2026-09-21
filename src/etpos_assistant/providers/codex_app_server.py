@@ -17,7 +17,7 @@ from .codex_cli import (
     codex_auth_directory,
     codex_environment,
 )
-from .prompting import AnswerStatusGate, build_prompt
+from .prompting import ANSWER_STATUSES, AnswerStatusGate, build_prompt
 from ..config import settings
 
 
@@ -208,6 +208,7 @@ class CodexAppServerProvider:
 
     def __init__(self) -> None:
         self.last_metrics: CodexRunMetrics | None = None
+        self.last_answer_status: str | None = None
         self._completed_metrics: deque[CodexRunMetrics] = deque(maxlen=256)
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[bytes] | None = None
@@ -340,6 +341,7 @@ class CodexAppServerProvider:
         sources: list[SourceContext],
         history: list[dict[str, str]],
     ) -> AsyncIterator[str]:
+        self.last_answer_status = None
         run_started = time.perf_counter()
         prompt_started = time.perf_counter()
         prompt = build_prompt(question, sources, history)
@@ -555,6 +557,9 @@ class CodexAppServerProvider:
                         raise RuntimeError(
                             "Codex app-server n'a retourné aucun message assistant final exploitable."
                         )
+                    self.last_answer_status = (
+                        status_gate.status if status_gate.status in ANSWER_STATUSES else None
+                    )
 
             except TimeoutError as exc:
                 await self._abort_process()

@@ -16,6 +16,8 @@ class SourceContext:
 
 
 class LLMProvider(Protocol):
+    last_answer_status: str | None
+
     async def stream_answer(
         self,
         *,

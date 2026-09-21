@@ -124,4 +124,5 @@ async def test_stream_chat_exposes_real_search_and_generation_statuses(monkeypat
     }
     assert any(event["type"] == "delta" for event in events[2:-1])
     assert events[-1]["type"] == "done"
+    assert events[-1]["answer_status"] == "full"
     assert events[-1]["citations"][0]["source_id"] == "S1"

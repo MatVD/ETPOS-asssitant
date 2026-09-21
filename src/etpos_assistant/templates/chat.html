@@ -7,7 +7,7 @@
       <div class="sidebar-brand-row">
         <a class="brand" href="/">
           <span class="brand-mark small" aria-hidden="true">E</span>
-          <span>ETPOS Agent</span>
+          <span>ETPOS Assistant</span>
         </a>
         <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Fermer l’historique">×</button>
       </div>
@@ -39,7 +39,7 @@
         <span class="sr-only">Ouvrir l’historique</span>
       </button>
       <div>
-        <h1>Assistant documentaire ETPOS</h1>
+        <h1>ETPOS Assistant</h1>
       </div>
     </header>
 
@@ -48,7 +48,7 @@
         <div class="empty-state" id="empty-state">
           <div class="empty-icon" aria-hidden="true">?</div>
           <h2>Pose une question sur ETPOS</h2>
-          <p>Les réponses sont fondées sur les sections du corpus local. Si le corpus ne suffit pas, l'assistant doit l'indiquer.</p>
+          <p>Procédures, réglages, chemins de menus et fonctionnement du logiciel.</p>
           <div class="suggestions">
             <button type="button" class="suggestion">Comment effectuer une sauvegarde ?</button>
             <button type="button" class="suggestion">Comment gérer les permissions d'un utilisateur ?</button>
@@ -59,18 +59,26 @@
       {% for message in messages %}
         <article class="message {{ message.role }}">
           <div class="message-label">{% if message.role == 'user' %}Vous{% else %}ETPOS Assistant{% endif %}</div>
+          {% if message.role == 'assistant' and message.answer_status == 'partial' %}
+            <div class="answer-status partial">Documentation partielle</div>
+          {% elif message.role == 'assistant' and message.answer_status == 'none' %}
+            <div class="answer-status none">Documentation insuffisante</div>
+          {% endif %}
           <div class="message-body">
             {% if message.role == 'assistant' %}{{ message.html|safe }}{% else %}<p>{{ message.content }}</p>{% endif %}
           </div>
           {% if message.citations %}
-          <div class="citations">
-            {% for citation in message.citations %}
-              <a class="citation-card" href="{{ citation.internal_url }}">
-                <strong>{{ citation.source_id }} — {{ citation.heading_path or citation.title }}</strong>
-                <span>{{ citation.document_name }}{% if citation.version %} · {{ citation.version }}{% endif %}</span>
-              </a>
-            {% endfor %}
-          </div>
+          <details class="citations">
+            <summary>Sources <span class="citation-count">{{ message.citations|length }}</span></summary>
+            <div class="citation-list">
+              {% for citation in message.citations %}
+                <a class="citation-card" data-source-id="{{ citation.source_id }}" href="{{ citation.internal_url }}">
+                  <strong>{{ citation.source_id }} — {{ citation.heading_path or citation.title }}</strong>
+                  <span>{{ citation.document_name }}{% if citation.version %} · {{ citation.version }}{% endif %}</span>
+                </a>
+              {% endfor %}
+            </div>
+          </details>
           {% endif %}
         </article>
       {% endfor %}
@@ -80,7 +88,7 @@
       <label for="message-input" class="sr-only">Question</label>
       <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" required></textarea>
       <button id="send-button" type="submit" class="send-button">Envoyer</button>
-      <p class="composer-note">Les réponses peuvent être incomplètes si la documentation indexée ne couvre pas la question.</p>
+      <p class="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
     </form>
   </main>
 </div>

@@ -59,10 +59,18 @@ button { cursor: pointer; }
 .message-body.streaming { white-space: pre-wrap; }
 .message-body.streaming p { margin: 0; }
 .message-status { color: #687386; font-style: italic; }
+.answer-status { display: inline-flex; width: fit-content; margin: 0 0 .7rem; padding: .28rem .5rem; border-radius: 999px; border: 1px solid #d8e0e8; background: #f8fafc; color: #5e6d80; font-size: .72rem; font-weight: 700; }
+.answer-status.none { color: #7b6654; background: #fbf8f3; border-color: #e8ddd1; }
 .message.error .message-body { color: #8a2d22; }
 .message-body pre { overflow-x: auto; background: #17202e; color: #eef2f7; padding: .9rem; border-radius: .7rem; }
 .message-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
-.citations { display: grid; gap: .5rem; margin-top: 1rem; }
+.message-body .menu-path { margin: .2rem 0 1rem; padding: .7rem .8rem; border: 1px solid #dce3eb; border-radius: .7rem; background: #f7f9fc; color: #25364d; }
+.citation-marker { color: #435f82; text-decoration: none; font-size: .78em; font-weight: 700; white-space: nowrap; vertical-align: .05em; }
+.citation-marker:hover { text-decoration: underline; }
+.citations { margin-top: 1rem; }
+.citations summary { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; color: #59697d; font-size: .78rem; font-weight: 700; user-select: none; }
+.citation-count { display: inline-grid; place-items: center; min-width: 1.25rem; height: 1.25rem; padding: 0 .3rem; border-radius: 999px; background: #edf2f7; color: #5e6d80; font-size: .68rem; }
+.citation-list { display: grid; gap: .5rem; margin-top: .65rem; }
 .citation-card { text-decoration: none; display: grid; gap: .2rem; padding: .65rem .75rem; border: 1px solid #dce2e9; border-radius: .65rem; background: white; }
 .citation-card strong { font-size: .8rem; color: #30445e; }
 .citation-card span { font-size: .72rem; color: #748195; }
@@ -151,10 +159,14 @@ button { cursor: pointer; }
   .login-card, .chat-header, .composer, .source-card, .citation-card, .suggestion { background: #18212f; border-color: #2a3748; }
   .stack-form input { background: #111923; color: #e9edf3; border-color: #344257; }
   .chat-header h1, .empty-state h2, .message-body, .source-text { color: #e9edf3; }
-  .status-badge, .metadata-grid { background: #121b26; border-color: #2a3748; }
+  .status-badge, .metadata-grid, .answer-status, .message-body .menu-path { background: #121b26; border-color: #2a3748; }
   .message { border-color: #273446; }
-  .message-status { color: #9aa8b9; }
+  .message-status, .citations summary { color: #9aa8b9; }
   .message.user .message-body { background: #202d3e; }
+  .message-body .menu-path { color: #e9edf3; }
+  .answer-status.none { background: #211d19; border-color: #40372e; color: #c4b39f; }
+  .citation-count { background: #202d3e; color: #b7c4d4; }
+  .citation-marker { color: #9eb7d5; }
   .composer textarea { color: #e9edf3; }
   .citation-card strong { color: #d5deea; }
 }

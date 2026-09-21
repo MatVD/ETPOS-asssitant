@@ -7,6 +7,9 @@ from .base import SourceContext
 
 
 class MockProvider:
+    def __init__(self) -> None:
+        self.last_answer_status: str | None = None
+
     async def stream_answer(
         self,
         *,
@@ -15,8 +18,10 @@ class MockProvider:
         history: list[dict[str, str]],
     ) -> AsyncIterator[str]:
         if not sources:
+            self.last_answer_status = "none"
             text = "La documentation ETPOS indexée ne permet pas de répondre avec certitude à cette question."
         else:
+            self.last_answer_status = "full"
             primary = sources[0]
             excerpt = " ".join(primary.text.split())[:700]
             text = (
