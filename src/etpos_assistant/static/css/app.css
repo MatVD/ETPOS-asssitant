@@ -38,7 +38,8 @@ button { cursor: pointer; touch-action: manipulation; }
 .history-search input { width: 100%; padding: .58rem .68rem; border: 1px solid rgba(255,255,255,.14); border-radius: .55rem; background: rgba(255,255,255,.06); color: #edf2f7; font-size: .82rem; }
 .history-search input::placeholder { color: #9eacbc; }
 .history-search input:focus { border-color: rgba(255,255,255,.32); background: rgba(255,255,255,.09); }
-.conversation-list { padding: .6rem; overflow-y: auto; flex: 1; min-height: 0; }
+.conversation-list { padding: .6rem; overflow-y: auto; flex: 1; min-height: 0; scrollbar-width: none; -ms-overflow-style: none; }
+.conversation-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .conversation-group + .conversation-group { margin-top: .85rem; }
 .conversation-group-title { margin: .35rem .7rem .28rem; color: #8f9eb0; font-size: .68rem; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .conversation-link { display: block; text-decoration: none; padding: .66rem .7rem; margin: .14rem 0; border-radius: .55rem; color: #d9e1ea; font-size: .86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
