@@ -276,6 +276,16 @@ class CodexCliProvider:
                 await process.wait()
                 stderr_task.cancel()
                 raise RuntimeError("Codex CLI a dépassé le délai maximal autorisé.") from exc
+            except (asyncio.CancelledError, GeneratorExit):
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                stderr_task.cancel()
+                try:
+                    await stderr_task
+                except asyncio.CancelledError:
+                    pass
+                raise
 
             stderr = (await stderr_task).decode("utf-8", errors="replace").strip()
             if return_code != 0:

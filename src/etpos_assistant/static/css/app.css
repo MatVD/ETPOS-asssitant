@@ -84,7 +84,13 @@ button { cursor: pointer; }
 .composer textarea { resize: none; max-height: 12rem; border: 0; outline: 0; padding: .65rem; line-height: 1.45; background: transparent; color: #18212f; }
 .send-button { align-self: end; padding: .68rem .95rem; }
 .send-button:disabled { opacity: .55; cursor: wait; }
+.send-button[hidden], .stop-button[hidden] { display: none; }
+.stop-button { align-self: end; padding: .64rem .9rem; border: 1px solid #cfd7e1; border-radius: .7rem; background: #f7f9fb; color: #34465e; font-weight: 700; }
+.stop-button:hover { background: #edf2f7; }
 .composer-note { grid-column: 1 / -1; margin: 0 .4rem; font-size: .7rem; color: #8a94a3; }
+.message-actions { display: flex; gap: .5rem; margin-top: .8rem; }
+.retry-button { padding: .48rem .7rem; border: 1px solid #cfd7e1; border-radius: .6rem; background: white; color: #34465e; font-size: .8rem; font-weight: 700; }
+.retry-button:hover { background: #f5f7fa; }
 .source-shell { width: min(100% - 2rem, 58rem); margin: 2rem auto; }
 .back-link { display: inline-block; margin-bottom: 1rem; text-decoration: none; color: #55677e; }
 .source-card { background: white; border: 1px solid #e0e5eb; border-radius: 1rem; padding: 1.5rem; }
@@ -162,7 +168,7 @@ button { cursor: pointer; }
 @media (prefers-color-scheme: dark) {
   :root { color: #e9edf3; background: #101722; }
   body { background: #101722; color: #e9edf3; }
-  .login-card, .chat-header, .composer, .source-card, .citation-card, .suggestion { background: #18212f; border-color: #2a3748; }
+  .login-card, .chat-header, .composer, .source-card, .citation-card, .suggestion, .retry-button, .stop-button { background: #18212f; border-color: #2a3748; }
   .stack-form input { background: #111923; color: #e9edf3; border-color: #344257; }
   .chat-header h1, .empty-state h2, .message-body, .source-text { color: #e9edf3; }
   .status-badge, .metadata-grid, .answer-status, .message-body .menu-path { background: #121b26; border-color: #2a3748; }

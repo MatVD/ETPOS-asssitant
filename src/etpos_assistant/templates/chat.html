@@ -91,12 +91,23 @@
           {% endif %}
         </article>
       {% endfor %}
+
+      {% if pending_response %}
+        <article class="message assistant retryable">
+          <div class="message-label">ETPOS Assistant</div>
+          <div class="message-body"><p>La réponse précédente n’a pas été terminée.</p></div>
+          <div class="message-actions">
+            <button type="button" class="retry-button">Réessayer</button>
+          </div>
+        </article>
+      {% endif %}
     </section>
 
     <form id="chat-form" class="composer">
       <label for="message-input" class="sr-only">Question</label>
       <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" required></textarea>
       <button id="send-button" type="submit" class="send-button">Envoyer</button>
+      <button id="stop-button" type="button" class="stop-button" hidden>Arrêter</button>
       <p class="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
     </form>
   </main>

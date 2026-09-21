@@ -62,6 +62,7 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
         "conversation_id": conversation_id,
         "conversation_exists": conversation_exists,
         "messages": messages,
+        "pending_response": bool(messages and messages[-1]["role"] == "user"),
     }
 
 

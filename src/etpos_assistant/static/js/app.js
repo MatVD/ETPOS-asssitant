@@ -2,6 +2,7 @@
   const form = document.getElementById("chat-form");
   const input = document.getElementById("message-input");
   const send = document.getElementById("send-button");
+  const stop = document.getElementById("stop-button");
   const messages = document.getElementById("messages");
   const main = document.querySelector(".chat-main");
   const shell = document.getElementById("app-shell");
@@ -13,6 +14,7 @@
   let conversationLinks = conversationList
     ? Array.from(conversationList.querySelectorAll(".conversation-link"))
     : [];
+  let activeGeneration = null;
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
 
   const normalizeHistoryText = (value) => (
@@ -141,7 +143,7 @@
     });
   }
 
-  if (!form || !input || !send || !messages || !main) return;
+  if (!form || !input || !send || !stop || !messages || !main) return;
 
   const resize = () => {
     input.style.height = "auto";
@@ -212,6 +214,52 @@
     assistant.progress.hidden = true;
     assistant.progress.textContent = "";
     assistant.body.hidden = false;
+  }
+
+  function renderRetryState(article, message) {
+    article.classList.add("retryable");
+    article.classList.remove("error");
+    article.removeAttribute("aria-busy");
+    article.querySelector(".answer-status")?.remove();
+    article.querySelector(".citations")?.remove();
+    article.querySelector(".message-progress")?.remove();
+
+    let body = article.querySelector(".message-body");
+    if (!body) {
+      body = document.createElement("div");
+      body.className = "message-body";
+      article.appendChild(body);
+    }
+    body.classList.remove("streaming");
+    body.hidden = false;
+    body.replaceChildren();
+    const paragraph = document.createElement("p");
+    paragraph.textContent = message;
+    body.appendChild(paragraph);
+
+    article.querySelector(".message-actions")?.remove();
+    if (main.dataset.conversationId) {
+      const actions = document.createElement("div");
+      actions.className = "message-actions";
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "retry-button";
+      retry.textContent = "Réessayer";
+      actions.appendChild(retry);
+      article.appendChild(actions);
+    }
+  }
+
+  function setGenerating(active) {
+    send.disabled = active;
+    send.hidden = active;
+    stop.hidden = !active;
+    stop.disabled = !active;
+    if (active) {
+      form.setAttribute("aria-busy", "true");
+    } else {
+      form.removeAttribute("aria-busy");
+    }
   }
 
   function renderAnswerStatus(article, status) {
@@ -400,16 +448,17 @@
           assistant.article.dataset.completeMs = String(
             Math.round(performance.now() - assistant.startedAt),
           );
+          assistant.article.classList.remove("retryable", "error");
+          assistant.article.querySelector(".message-actions")?.remove();
           assistant.article.removeAttribute("aria-busy");
           renderAnswerStatus(assistant.article, event.answer_status || "");
           renderCitations(assistant.article, event.citations || []);
           enhanceAssistantMessage(assistant.article);
         } else if (event.type === "error") {
-          showAssistantContent(assistant);
-          assistant.body.classList.remove("streaming");
-          assistant.paragraph.textContent = event.message || "La réponse n’a pas pu être générée.";
-          assistant.article.classList.add("error");
-          assistant.article.removeAttribute("aria-busy");
+          renderRetryState(
+            assistant.article,
+            event.message || "La réponse n’a pas pu être générée.",
+          );
         }
 
         if (followResponse && ["status", "delta", "done", "error"].includes(event.type)) {
@@ -430,41 +479,90 @@
     requestAnimationFrame(() => scrollToBottom());
   }
 
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const text = input.value.trim();
-    if (!text || send.disabled) return;
-
-    addMessage("user", text);
-    const assistant = addMessage("assistant", "");
+  async function runGeneration(endpoint, payload, assistant) {
+    const generation = {
+      controller: new AbortController(),
+      assistant,
+      stoppedByUser: false,
+    };
+    activeGeneration = generation;
     assistant.article.setAttribute("aria-busy", "true");
     setAssistantStatus(assistant, "Je vérifie la documentation ETPOS…", "requesting");
-    input.value = "";
-    resize();
-    send.disabled = true;
-    form.setAttribute("aria-busy", "true");
-    input.focus({ preventScroll: true });
-    scrollToBottom("smooth");
+    setGenerating(true);
 
-    const conversationId = main.dataset.conversationId ? Number(main.dataset.conversationId) : null;
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ message: text, conversation_id: conversationId }),
+        body: JSON.stringify(payload),
+        signal: generation.controller.signal,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await consumeSSE(response, assistant);
     } catch (error) {
-      showAssistantContent(assistant);
-      assistant.body.classList.remove("streaming");
-      assistant.paragraph.textContent = "La requête n’a pas abouti. Vérifiez votre connexion puis réessayez.";
-      assistant.article.classList.add("error");
-      assistant.article.removeAttribute("aria-busy");
-      console.error(error);
+      if (error?.name === "AbortError" && generation.stoppedByUser) {
+        renderRetryState(assistant.article, "Réponse interrompue.");
+      } else if (error?.name !== "AbortError") {
+        renderRetryState(
+          assistant.article,
+          "La requête n’a pas abouti. Vérifiez votre connexion puis réessayez.",
+        );
+        console.error(error);
+      }
     } finally {
-      send.disabled = false;
-      form.removeAttribute("aria-busy");
+      if (activeGeneration === generation) {
+        activeGeneration = null;
+        setGenerating(false);
+      }
     }
+  }
+
+  stop.addEventListener("click", () => {
+    if (!activeGeneration) return;
+    activeGeneration.stoppedByUser = true;
+    stop.disabled = true;
+    activeGeneration.controller.abort();
+  });
+
+  messages.addEventListener("click", async (event) => {
+    const retry = event.target.closest(".retry-button");
+    if (!retry || activeGeneration) return;
+
+    const conversationId = Number(main.dataset.conversationId);
+    if (!conversationId) return;
+
+    const previous = retry.closest(".message.assistant");
+    previous?.remove();
+
+    const assistant = addMessage("assistant", "");
+    input.focus({ preventScroll: true });
+    scrollToBottom("smooth");
+    await runGeneration(
+      "/api/chat/retry",
+      { conversation_id: conversationId },
+      assistant,
+    );
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text || activeGeneration) return;
+
+    addMessage("user", text);
+    const assistant = addMessage("assistant", "");
+    input.value = "";
+    resize();
+    input.focus({ preventScroll: true });
+    scrollToBottom("smooth");
+
+    const conversationId = main.dataset.conversationId
+      ? Number(main.dataset.conversationId)
+      : null;
+    await runGeneration(
+      "/api/chat",
+      { message: text, conversation_id: conversationId },
+      assistant,
+    );
   });
 })();
