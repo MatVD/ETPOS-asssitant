@@ -56,7 +56,7 @@ Les identifiants ChatGPT/Codex sont sensibles. `CODEX_HOME`, `ETPOS_CODEX_APP_HO
 
 ## En-têtes applicatifs
 
-L'application ajoute notamment : CSP restrictive, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Permissions-Policy` restrictive et `frame-ancestors 'none'`. `same-origin` est volontaire : le contrôle anti-CSRF du login peut utiliser `Referer` comme signal de même origine lorsque `Origin` n'est pas envoyé, tout en évitant d'envoyer le référent vers un site externe.
+L'application ajoute notamment : CSP restrictive, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Permissions-Policy` restrictive et `frame-ancestors 'none'`. `same-origin` est volontaire : le contrôle anti-CSRF du login peut utiliser `Referer` comme signal de même origine lorsque `Origin` n'est pas envoyé, tout en évitant d'envoyer le référent vers un site externe. La dictée autorise explicitement `microphone=(self)` uniquement pour l'origine ETPOS Assistant ; caméra et géolocalisation restent refusées. L'audio de dictée est borné, traité dans un fichier temporaire et supprimé après transcription ; il n'est pas persisté dans les bases applicatives.
 
 ## Production
 

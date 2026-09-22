@@ -3,6 +3,8 @@
   const input = document.getElementById("message-input");
   const send = document.getElementById("send-button");
   const stop = document.getElementById("stop-button");
+  const dictation = document.getElementById("dictation-button");
+  const composerStatus = document.getElementById("composer-status");
   const messages = document.getElementById("messages");
   const main = document.querySelector(".chat-main");
   const shell = document.getElementById("app-shell");
@@ -19,6 +21,9 @@
     ? Array.from(conversationList.querySelectorAll(".conversation-link"))
     : [];
   let activeGeneration = null;
+  let activeRecorder = null;
+  let dictationBusy = false;
+  let dictationStopTimer = null;
   let sidebarPreviousFocus = null;
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
 
@@ -217,6 +222,200 @@
     if (!send.disabled) form.requestSubmit();
   });
 
+  const setComposerStatus = (text = "", isError = false) => {
+    if (!composerStatus) return;
+    composerStatus.textContent = text;
+    composerStatus.classList.toggle("error", Boolean(isError));
+  };
+
+  const supportedRecorderMimeType = () => {
+    if (typeof MediaRecorder === "undefined") return "";
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/mp4",
+      "audio/ogg;codecs=opus",
+      "audio/webm",
+      "audio/ogg",
+    ];
+    return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+  };
+
+  const setDictationState = (state) => {
+    if (!dictation) return;
+    const recording = state === "recording";
+    const transcribing = state === "transcribing";
+    dictation.classList.toggle("recording", recording);
+    dictation.classList.toggle("transcribing", transcribing);
+    dictation.setAttribute("aria-pressed", recording ? "true" : "false");
+    dictation.setAttribute(
+      "aria-label",
+      recording ? "Arrêter la dictée" : transcribing ? "Transcription en cours" : "Dicter une question",
+    );
+    dictation.disabled = transcribing || Boolean(activeGeneration);
+    send.disabled = recording || transcribing || Boolean(activeGeneration);
+  };
+
+  const insertTranscription = (text) => {
+    const transcript = String(text || "").trim();
+    if (!transcript) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    const needsSpaceBefore = before && !/\s$/.test(before);
+    const needsSpaceAfter = after && !/^\s/.test(after);
+    const inserted = (needsSpaceBefore ? " " : "") + transcript + (needsSpaceAfter ? " " : "");
+    const nextValue = (before + inserted + after).slice(0, input.maxLength || 4000);
+    input.value = nextValue;
+    const caret = Math.min(before.length + inserted.length, nextValue.length);
+    input.setSelectionRange(caret, caret);
+    resize();
+    input.focus({ preventScroll: true });
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  const stopRecorderTracks = (recorderState) => {
+    recorderState?.stream?.getTracks?.().forEach((track) => track.stop());
+  };
+
+  async function transcribeRecording(blob) {
+    if (!blob || blob.size === 0) {
+      setDictationState("idle");
+      setComposerStatus("Aucun son n’a été enregistré.", true);
+      return;
+    }
+
+    dictationBusy = true;
+    setDictationState("transcribing");
+    setComposerStatus("Transcription en cours…");
+    try {
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: {
+          "Content-Type": blob.type || "audio/webm",
+          "X-CSRF-Token": csrf,
+        },
+        body: blob,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || "La transcription n’a pas abouti.");
+      }
+      insertTranscription(payload.text || "");
+      setComposerStatus("");
+      announce("Transcription ajoutée au champ de question.");
+    } catch (error) {
+      const message = error?.message || "La transcription n’a pas abouti.";
+      setComposerStatus(message, true);
+      announce(message);
+    } finally {
+      dictationBusy = false;
+      setDictationState("idle");
+    }
+  }
+
+  async function startDictation() {
+    if (!dictation || dictationBusy || activeGeneration) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setComposerStatus("La dictée n’est pas disponible dans ce navigateur ou hors HTTPS.", true);
+      return;
+    }
+
+    setComposerStatus("");
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+      const mimeType = supportedRecorderMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 64000 })
+        : new MediaRecorder(stream);
+      const state = { recorder, stream, chunks: [] };
+      activeRecorder = state;
+
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) state.chunks.push(event.data);
+      });
+      recorder.addEventListener("stop", async () => {
+        if (dictationStopTimer) {
+          clearTimeout(dictationStopTimer);
+          dictationStopTimer = null;
+        }
+        stopRecorderTracks(state);
+        if (activeRecorder === state) activeRecorder = null;
+        const actualType = recorder.mimeType || mimeType || state.chunks[0]?.type || "audio/webm";
+        const blob = new Blob(state.chunks, { type: actualType });
+        await transcribeRecording(blob);
+      }, { once: true });
+      recorder.addEventListener("error", () => {
+        if (dictationStopTimer) {
+          clearTimeout(dictationStopTimer);
+          dictationStopTimer = null;
+        }
+        stopRecorderTracks(state);
+        if (activeRecorder === state) activeRecorder = null;
+        setDictationState("idle");
+        setComposerStatus("L’enregistrement audio a échoué.", true);
+      }, { once: true });
+
+      recorder.start();
+      setDictationState("recording");
+      setComposerStatus("Écoute en cours…");
+      announce("Dictée démarrée.");
+      dictationStopTimer = setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, 59000);
+    } catch (error) {
+      stream?.getTracks?.().forEach((track) => track.stop());
+      if (activeRecorder?.stream === stream) activeRecorder = null;
+      let message = "Impossible d’accéder au microphone.";
+      if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+        message = "Accès au microphone refusé. Autorisez-le dans le navigateur puis réessayez.";
+      } else if (error?.name === "NotFoundError") {
+        message = "Aucun microphone n’a été détecté.";
+      }
+      setDictationState("idle");
+      setComposerStatus(message, true);
+      announce(message);
+    }
+  }
+
+  function stopDictation() {
+    const recorder = activeRecorder?.recorder;
+    if (recorder?.state === "recording") {
+      recorder.stop();
+      setComposerStatus("Préparation de la transcription…");
+    }
+  }
+
+  if (dictation) {
+    const supported = window.isSecureContext
+      && Boolean(navigator.mediaDevices?.getUserMedia)
+      && typeof MediaRecorder !== "undefined";
+    dictation.hidden = !supported;
+    if (supported) {
+      dictation.addEventListener("click", () => {
+        if (activeRecorder?.recorder?.state === "recording") {
+          stopDictation();
+        } else {
+          void startDictation();
+        }
+      });
+    }
+  }
+
+  window.addEventListener("pagehide", () => {
+    if (dictationStopTimer) clearTimeout(dictationStopTimer);
+    stopRecorderTracks(activeRecorder);
+  });
+
   const isNearBottom = (threshold = 180) => (
     window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - threshold
   );
@@ -318,10 +517,11 @@
 
   function setGenerating(active) {
     const stopHadFocus = document.activeElement === stop;
-    send.disabled = active;
+    send.disabled = active || dictationBusy || Boolean(activeRecorder);
     send.hidden = active;
     stop.hidden = !active;
     stop.disabled = !active;
+    if (dictation) dictation.disabled = active || dictationBusy;
     if (active) {
       form.setAttribute("aria-busy", "true");
     } else {
@@ -622,7 +822,7 @@
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if (!text || activeGeneration) return;
+    if (!text || activeGeneration || dictationBusy || activeRecorder) return;
 
     addMessage("user", text);
     const assistant = addMessage("assistant", "");

@@ -13,7 +13,14 @@ from .config import settings
 from .db import init_all
 from .security import same_origin_request
 from .rag import shutdown_provider_runtime
-from .routers import auth_router, chat_router, health_router, pages_router, sources_router
+from .routers import (
+    auth_router,
+    chat_router,
+    health_router,
+    pages_router,
+    sources_router,
+    transcription_router,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -41,7 +48,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
     response.headers["Content-Security-Policy"] = (
@@ -55,4 +62,5 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(sources_router)
+app.include_router(transcription_router)
 app.include_router(pages_router)

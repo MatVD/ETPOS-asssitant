@@ -64,7 +64,7 @@ async def test_security_headers_match_documented_policy():
 
     assert response.headers["Referrer-Policy"] == "same-origin"
     assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
+    assert response.headers["Permissions-Policy"] == "camera=(), microphone=(self), geolocation=()"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
 

@@ -55,6 +55,7 @@ from .providers.codex_cli import codex_auth_directory, codex_environment
 from .rag import get_provider, shutdown_provider_runtime
 from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
+from .transcription import TranscriptionError, get_transcription_model, load_hotwords
 
 
 def cmd_init_db(_args) -> None:
@@ -738,6 +739,20 @@ def cmd_rescore_answer_report(args) -> None:
             )
 
 
+def cmd_whisper_preload(_args) -> None:
+    print(
+        "Préchargement Whisper : "
+        f"model={settings.whisper_model} "
+        f"device={settings.whisper_device} "
+        f"compute_type={settings.whisper_compute_type}"
+    )
+    try:
+        get_transcription_model()
+    except TranscriptionError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Modèle Whisper prêt. Hotwords : {len(load_hotwords())} terme(s).")
+
+
 def cmd_codex_status(_args) -> None:
     binary = shutil.which(settings.codex_binary) or (settings.codex_binary if Path(settings.codex_binary).is_file() else None)
     if not binary:
@@ -823,6 +838,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("codex-status", help="Verifier Codex CLI et son authentification ChatGPT")
     p.set_defaults(func=cmd_codex_status)
+
+    p = sub.add_parser(
+        "whisper-preload",
+        help="Télécharger/charger le modèle Whisper et vérifier les hotwords",
+    )
+    p.set_defaults(func=cmd_whisper_preload)
 
     p = sub.add_parser("eval-retrieval", help="Mesurer le retrieval sur un benchmark JSONL")
     p.add_argument("--path", default="eval/benchmark.jsonl")

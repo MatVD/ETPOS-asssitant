@@ -17,6 +17,7 @@ dependencies = [
   "httpx>=0.28,<0.29",
   "beautifulsoup4>=4.14,<5",
   "markdown-it-py>=4.0,<5",
+  "faster-whisper>=1.2.1,<2",
 ]
 
 [project.optional-dependencies]

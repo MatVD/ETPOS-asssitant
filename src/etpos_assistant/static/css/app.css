@@ -88,12 +88,19 @@ button { cursor: pointer; touch-action: manipulation; }
 .citation-card span { font-size: .72rem; color: #748195; }
 .composer { position: sticky; bottom: 0; width: min(calc(100% - 2rem), 58rem); margin: 0 auto max(1rem, env(safe-area-inset-bottom)); display: grid; grid-template-columns: 1fr auto; gap: .6rem; padding: .75rem; border: 1px solid #d8dee7; border-radius: 1rem; background: white; box-shadow: 0 16px 40px rgba(27,39,56,.11); }
 .composer textarea { resize: none; max-height: 12rem; border: 0; padding: .65rem; line-height: 1.45; background: transparent; color: #18212f; }
-.send-button { align-self: end; padding: .68rem .95rem; }
-.send-button:disabled { opacity: .55; cursor: wait; }
-.send-button[hidden], .stop-button[hidden] { display: none; }
-.stop-button { align-self: end; padding: .64rem .9rem; border: 1px solid #cfd7e1; border-radius: .7rem; background: #f7f9fb; color: #34465e; font-weight: 700; }
-.stop-button:hover { background: #edf2f7; }
-.composer-note { grid-column: 1 / -1; margin: 0 .4rem; font-size: .7rem; color: #8a94a3; }
+.composer-actions { align-self: end; display: flex; align-items: center; gap: .42rem; }
+.composer-icon-button { position: relative; display: grid; place-items: center; width: 2.55rem; height: 2.55rem; flex: 0 0 auto; padding: 0; border-radius: .7rem; }
+.composer-icon-button svg { width: 1.28rem; height: 1.28rem; fill: currentColor; }
+.send-button { border: 0; background: #273a57; color: white; }
+.dictation-button, .stop-button { border: 1px solid #cfd7e1; background: #f7f9fb; color: #34465e; }
+.dictation-button:hover, .stop-button:hover { background: #edf2f7; }
+.dictation-button.recording { border-color: #b94a48; background: #fff2f1; color: #9d322f; }
+.dictation-button.recording::after { content: ""; position: absolute; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; transform: translate(.78rem,-.78rem); }
+.composer-icon-button:disabled { opacity: .5; cursor: wait; }
+.composer-icon-button[hidden] { display: none; }
+.composer-note, .composer-status { grid-column: 1 / -1; margin: 0 .4rem; font-size: .7rem; color: #8a94a3; }
+.composer-status:empty { display: none; }
+.composer-status.error { color: #8a2d22; }
 .message-actions { display: flex; gap: .5rem; margin-top: .8rem; }
 .retry-button { padding: .48rem .7rem; border: 1px solid #cfd7e1; border-radius: .6rem; background: white; color: #34465e; font-size: .8rem; font-weight: 700; }
 .retry-button:hover { background: #f5f7fa; }
@@ -172,7 +179,7 @@ button { cursor: pointer; touch-action: manipulation; }
   .composer { width: calc(100% - 1rem - env(safe-area-inset-left) - env(safe-area-inset-right)); margin-bottom: max(.5rem, env(safe-area-inset-bottom)); }
   .conversation-link, .new-chat, .retry-button, .text-button { min-height: 2.75rem; }
   .conversation-link, .new-chat { display: flex; align-items: center; }
-  .send-button, .stop-button { min-height: 2.75rem; }
+  .composer-icon-button { width: 2.75rem; height: 2.75rem; min-height: 2.75rem; }
   .source-shell { width: auto; margin: max(1rem, env(safe-area-inset-top)) 0 max(1rem, env(safe-area-inset-bottom)); padding: 0 calc(1rem + env(safe-area-inset-right)) 0 calc(1rem + env(safe-area-inset-left)); }
   .metadata-grid { grid-template-columns: 1fr; }
 }
@@ -183,7 +190,7 @@ button { cursor: pointer; touch-action: manipulation; }
 @media (prefers-color-scheme: dark) {
   :root { color: #e9edf3; background: #101722; }
   body { background: #101722; color: #e9edf3; }
-  .login-card, .chat-header, .composer, .source-card, .citation-card, .suggestion, .retry-button, .stop-button { background: #18212f; border-color: #2a3748; }
+  .login-card, .chat-header, .composer, .source-card, .citation-card, .suggestion, .retry-button, .dictation-button, .stop-button { background: #18212f; border-color: #2a3748; }
   .stack-form input { background: #111923; color: #e9edf3; border-color: #344257; }
   .chat-header h1, .empty-state h2, .message-body, .source-text { color: #e9edf3; }
   .status-badge, .metadata-grid, .answer-status, .message-body .menu-path { background: #121b26; border-color: #2a3748; }
@@ -195,5 +202,8 @@ button { cursor: pointer; touch-action: manipulation; }
   .citation-count { background: #202d3e; color: #b7c4d4; }
   .citation-marker { color: #9eb7d5; }
   .composer textarea { color: #e9edf3; }
+  .dictation-button, .stop-button { color: #c8d3df; }
+  .dictation-button.recording { background: #2b1b1b; border-color: #70403e; color: #f1a09b; }
+  .composer-status.error { color: #f0a29a; }
   .citation-card strong { color: #d5deea; }
 }

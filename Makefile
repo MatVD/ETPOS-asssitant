@@ -1,4 +1,4 @@
-.PHONY: install dev test init-db create-user ingest quality-baseline
+.PHONY: install dev test init-db create-user ingest whisper-preload quality-baseline
 
 install:
 	python3.12 -m venv .venv
@@ -19,6 +19,9 @@ create-user:
 
 ingest:
 	.venv/bin/etpos-assistant ingest
+
+whisper-preload:
+	.venv/bin/etpos-assistant whisper-preload
 
 quality-baseline:
 	sh scripts/run_quality_baseline.sh

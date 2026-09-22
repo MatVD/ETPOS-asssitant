@@ -36,6 +36,12 @@ def _default_backup_dir() -> str:
     return "./backups"
 
 
+def _default_whisper_download_root() -> str | None:
+    if os.getenv("ETPOS_ENV", "development").strip().lower() == "production":
+        return "/var/lib/etpos-assistant/whisper"
+    return None
+
+
 _load_local_env()
 
 
@@ -67,6 +73,24 @@ class Settings:
     codex_timeout_seconds: int = int(os.getenv("CODEX_TIMEOUT_SECONDS", "120"))
     retrieval_limit: int = int(os.getenv("ETPOS_RETRIEVAL_LIMIT", "6"))
     source_char_limit: int = int(os.getenv("ETPOS_SOURCE_CHAR_LIMIT", "9000"))
+    whisper_model: str = os.getenv("ETPOS_WHISPER_MODEL", "large-v3-turbo").strip()
+    whisper_device: str = os.getenv("ETPOS_WHISPER_DEVICE", "cpu").strip().lower()
+    whisper_compute_type: str = os.getenv("ETPOS_WHISPER_COMPUTE_TYPE", "int8").strip().lower()
+    whisper_language: str = os.getenv("ETPOS_WHISPER_LANGUAGE", "fr").strip().lower()
+    whisper_download_root: Path | None = (
+        Path(os.getenv("ETPOS_WHISPER_DOWNLOAD_ROOT") or _default_whisper_download_root()).expanduser()
+        if (os.getenv("ETPOS_WHISPER_DOWNLOAD_ROOT") or _default_whisper_download_root())
+        else None
+    )
+    whisper_local_files_only: bool = _as_bool(os.getenv("ETPOS_WHISPER_LOCAL_FILES_ONLY"), False)
+    whisper_cpu_threads: int = int(os.getenv("ETPOS_WHISPER_CPU_THREADS", "0"))
+    whisper_max_upload_bytes: int = int(os.getenv("ETPOS_WHISPER_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
+    whisper_max_duration_seconds: int = int(os.getenv("ETPOS_WHISPER_MAX_DURATION_SECONDS", "60"))
+    whisper_hotwords_path: Path | None = (
+        Path(os.environ["ETPOS_WHISPER_HOTWORDS_PATH"]).expanduser()
+        if os.getenv("ETPOS_WHISPER_HOTWORDS_PATH")
+        else None
+    )
 
     @property
     def app_db(self) -> Path:

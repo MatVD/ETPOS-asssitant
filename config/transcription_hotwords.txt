@@ -1,0 +1,28 @@
+# Vocabulaire court destiné uniquement à aider la reconnaissance vocale.
+# Un terme ou une expression par ligne. Ne pas ajouter de procédures ou de réponses.
+ETPOS
+Verifone
+TPE
+TPV
+pesage
+balance
+caisse enregistreuse
+tiroir-caisse
+ouverture de caisse
+fermeture de caisse
+compte de vente
+compte courant client
+compte courant fournisseur
+règlement
+règlements
+règlement mixte
+articles
+familles
+utilisateurs
+opérateurs
+tables
+cartes
+cartes à points
+RFID
+fournisseurs
+clients

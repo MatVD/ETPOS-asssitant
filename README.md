@@ -22,6 +22,7 @@ Le projet **n'utilise pas de clé OpenAI API**. Le provider de production prévu
 - Transport SSE entre le backend et le navigateur.
 - Providers : `mock` pour le diagnostic local et `codex` pour Codex CLI.
 - Citations sélectionnées et validées côté serveur.
+- Dictée locale du prompt avec `faster-whisper` + Whisper `large-v3-turbo`, sans API externe.
 
 ## Pourquoi Codex CLI
 
@@ -101,6 +102,26 @@ make dev
 ```
 
 Puis ouvrir : http://127.0.0.1:8787
+
+### Dictée vocale locale
+
+Le bouton microphone du compositeur enregistre uniquement après une action explicite de l'utilisateur. Le navigateur utilise `getUserMedia()` + `MediaRecorder`, choisit un format audio supporté (`webm/opus`, `mp4` ou `ogg/opus`), puis envoie le blob brut à `POST /api/transcribe`.
+
+Le backend :
+- exige la session et le jeton CSRF ;
+- limite le corps audio à 8 Mio et la durée décodée à 60 secondes par défaut ;
+- écrit l'audio dans un fichier temporaire supprimé après traitement ;
+- force la transcription française avec Whisper `large-v3-turbo`, `faster-whisper`, CPU `int8` et Silero VAD ;
+- applique les termes de `config/transcription_hotwords.txt` comme `hotwords` afin d'aider les termes métier sans coder de réponse ETPOS ;
+- renvoie uniquement le texte, qui est inséré dans le champ et reste modifiable avant envoi.
+
+Le modèle est chargé paresseusement et conservé en mémoire. Pour éviter le téléchargement au premier clic, le précharger après installation :
+
+```bash
+make whisper-preload
+```
+
+En production, utiliser un cache inscriptible hors du home protégé, par exemple `ETPOS_WHISPER_DOWNLOAD_ROOT=/var/lib/etpos-assistant/whisper`. Après préchargement, `ETPOS_WHISPER_LOCAL_FILES_ONLY=true` permet de refuser tout téléchargement de modèle au runtime.
 
 `make ingest` télécharge uniquement les sources activées dans `config/sources.json`. Le téléchargement n'a lieu qu'à l'ingestion, jamais à chaque question utilisateur.
 
