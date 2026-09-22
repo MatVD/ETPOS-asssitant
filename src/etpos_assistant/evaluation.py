@@ -40,6 +40,7 @@ class BenchmarkCase:
     question: str
     answerability: str
     relevant_section_groups: tuple[tuple[str, ...], ...]
+    expected_citation_groups: tuple[tuple[str, ...], ...] = ()
     expected_heading_paths: tuple[str, ...] = ()
     expected_menu_paths: tuple[str, ...] = ()
     expected_menu_path_groups: tuple[tuple[str, ...], ...] = ()
@@ -83,6 +84,7 @@ class GeneratedAnswer:
     generation_latency_ms: float
     total_latency_ms: float
     provider_metrics: dict | None = None
+    answer_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,7 @@ class AnswerCaseResult:
     case: BenchmarkCase
     answer: GeneratedAnswer
     abstention_correct: bool
+    answer_status_correct: bool | None
     matched_facts: int
     expected_facts: int
     matched_menu_paths: int
@@ -234,6 +237,9 @@ def _case_from_dict(item: dict, line_number: int) -> BenchmarkCase:
         question=question,
         answerability=answerability,
         relevant_section_groups=groups,
+        expected_citation_groups=_string_groups(
+            item.get("expected_citation_groups"), "expected_citation_groups", case_id
+        ),
         expected_heading_paths=_strings(
             item.get("expected_heading_paths"), "expected_heading_paths", case_id
         ),
@@ -435,6 +441,7 @@ async def generate_answer_for_case(
             retrieval_latency_ms=retrieval_latency_ms,
             generation_latency_ms=0.0,
             total_latency_ms=total_latency_ms,
+            answer_status="none",
         )
 
     contexts = [
@@ -471,6 +478,8 @@ async def generate_answer_for_case(
         if provider_metrics is not None and hasattr(provider_metrics, "as_dict")
         else None
     )
+    provider_status = getattr(provider, "last_answer_status", None)
+    answer_status = provider_status if provider_status in ANSWERABILITY_VALUES else None
     return GeneratedAnswer(
         text=answer,
         citations=citations,
@@ -479,6 +488,7 @@ async def generate_answer_for_case(
         generation_latency_ms=generation_latency_ms,
         total_latency_ms=total_latency_ms,
         provider_metrics=metrics_payload,
+        answer_status=answer_status,
     )
 
 
@@ -584,6 +594,9 @@ def _menu_evidence_supported_by_citations(
 def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCaseResult:
     is_abstention = _is_abstention(answer.text)
     abstention_correct = is_abstention if case.answerability == "none" else not is_abstention
+    answer_status_correct = (
+        None if answer.answer_status is None else answer.answer_status == case.answerability
+    )
 
     fact_groups = _effective_groups(case.required_facts, case.required_fact_groups)
     menu_path_groups = _effective_groups(case.expected_menu_paths, case.expected_menu_path_groups)
@@ -600,10 +613,11 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
     matched_facts = len(matched_fact_groups)
     matched_menu_paths = len(matched_menu_path_groups)
 
+    citation_groups = case.expected_citation_groups or case.relevant_section_groups
     relevant_section_ids = {
         section.id
         for section in answer.sections
-        if any(_matches_group(section, group) for group in case.relevant_section_groups)
+        if any(_matches_group(section, group) for group in citation_groups)
     }
     cited_section_ids = {
         int(citation["section_id"])
@@ -614,7 +628,7 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
     total_citations = len(cited_section_ids)
     matched_citation_groups = sum(
         any(section.id in cited_section_ids and _matches_group(section, group) for section in answer.sections)
-        for group in case.relevant_section_groups
+        for group in citation_groups
     )
     cited_sections = tuple(section for section in answer.sections if section.id in cited_section_ids)
     supported_fact_items = sum(
@@ -635,6 +649,7 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
         case=case,
         answer=answer,
         abstention_correct=abstention_correct,
+        answer_status_correct=answer_status_correct,
         matched_facts=matched_facts,
         expected_facts=len(fact_groups),
         matched_menu_paths=matched_menu_paths,
@@ -642,11 +657,70 @@ def score_answer_case(case: BenchmarkCase, answer: GeneratedAnswer) -> AnswerCas
         relevant_citations=relevant_citations,
         total_citations=total_citations,
         matched_citation_groups=matched_citation_groups,
-        expected_citation_groups=len(case.relevant_section_groups),
+        expected_citation_groups=len(citation_groups),
         matched_evidence_items=matched_evidence_items,
         supported_evidence_items=supported_evidence_items,
         citation_presence_correct=citation_presence_correct,
     )
+
+
+def answer_quality_failures(
+    results: list[AnswerCaseResult],
+    *,
+    require_status: bool = False,
+) -> list[AnswerCaseResult]:
+    failures: list[AnswerCaseResult] = []
+    for result in results:
+        status_failed = (
+            result.answer_status_correct is not True
+            if require_status
+            else result.answer_status_correct is False
+        )
+        if (
+            not result.abstention_correct
+            or status_failed
+            or (result.expected_facts and result.matched_facts < result.expected_facts)
+            or (
+                result.expected_menu_paths
+                and result.matched_menu_paths < result.expected_menu_paths
+            )
+            or not result.citation_presence_correct
+            or (
+                result.expected_citation_groups
+                and result.matched_citation_groups < result.expected_citation_groups
+            )
+            or (
+                result.matched_evidence_items
+                and result.supported_evidence_items < result.matched_evidence_items
+            )
+        ):
+            failures.append(result)
+    return failures
+
+
+def answer_quality_failure_reasons(result: AnswerCaseResult) -> tuple[str, ...]:
+    failures: list[str] = []
+    if not result.abstention_correct:
+        failures.append("abstention")
+    if result.answer_status_correct is not True:
+        failures.append("answer_status")
+    if result.expected_facts and result.matched_facts < result.expected_facts:
+        failures.append("required_facts")
+    if result.expected_menu_paths and result.matched_menu_paths < result.expected_menu_paths:
+        failures.append("menu_paths")
+    if not result.citation_presence_correct:
+        failures.append("citation_presence")
+    if (
+        result.expected_citation_groups
+        and result.matched_citation_groups < result.expected_citation_groups
+    ):
+        failures.append("citation_expected_coverage")
+    if (
+        result.matched_evidence_items
+        and result.supported_evidence_items < result.matched_evidence_items
+    ):
+        failures.append("citation_evidence")
+    return tuple(failures)
 
 
 def answer_result_to_dict(result: AnswerCaseResult) -> dict:
@@ -657,7 +731,9 @@ def answer_result_to_dict(result: AnswerCaseResult) -> dict:
         "answerability": result.case.answerability,
         "history": list(result.case.history),
         "answer": result.answer.text,
+        "answer_status": result.answer.answer_status,
         "abstention_correct": result.abstention_correct,
+        "answer_status_correct": result.answer_status_correct,
         "matched_facts": result.matched_facts,
         "expected_facts": result.expected_facts,
         "matched_menu_paths": result.matched_menu_paths,
@@ -703,6 +779,12 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
     citation_group_matches = sum(result.matched_citation_groups for result in results)
     matched_evidence_items = sum(result.matched_evidence_items for result in results)
     supported_evidence_items = sum(result.supported_evidence_items for result in results)
+    status_results = [
+        result.answer_status_correct
+        for result in results
+        if result.answer_status_correct is not None
+    ]
+    status_matches = sum(item is True for item in status_results)
     latencies = [result.answer.total_latency_ms for result in results]
     provider_metrics = [
         result.answer.provider_metrics
@@ -730,6 +812,11 @@ def summarize_answers(results: list[AnswerCaseResult]) -> dict:
             if results
             else 0.0
         ),
+        "answer_status_accuracy": (
+            status_matches / len(status_results) if status_results else None
+        ),
+        "answer_status_matches": status_matches,
+        "answer_status_total": len(status_results),
         "fact_coverage": fact_matches / fact_total if fact_total else None,
         "fact_matches": fact_matches,
         "fact_total": fact_total,
@@ -840,6 +927,12 @@ def rescore_answer_report(
                 citations = payload.get("citations", [])
                 if not isinstance(citations, list):
                     raise BenchmarkError(f"{case.case_id}: citations invalides")
+                raw_answer_status = payload.get("answer_status")
+                answer_status = (
+                    str(raw_answer_status)
+                    if raw_answer_status in ANSWERABILITY_VALUES
+                    else None
+                )
                 answer = GeneratedAnswer(
                     text=str(payload.get("answer") or ""),
                     citations=tuple(citation for citation in citations if isinstance(citation, dict)),
@@ -852,6 +945,7 @@ def rescore_answer_report(
                         if isinstance(payload.get("provider_metrics"), dict)
                         else None
                     ),
+                    answer_status=answer_status,
                 )
                 results.append(score_answer_case(case, answer))
     except sqlite3.Error as exc:

@@ -40,6 +40,12 @@ printf '%s\n' "== Retrieval acceptance =="
   --min-recall 0.95 \
   --min-group-coverage 0.95
 
+printf '%s\n' "== Retrieval challenge (diagnostic) =="
+"$CLI" eval-retrieval \
+  --path eval/challenge.jsonl \
+  --docs-db data/docs.db \
+  --limit 5
+
 printf '%s\n' "== Retrieval contrat Support =="
 "$CLI" eval-retrieval \
   --path eval/support.jsonl \
@@ -61,26 +67,37 @@ export ETPOS_PROVIDER=codex
 printf '%s\n' "== Réponses Codex benchmark principal =="
 "$CLI" eval-answer \
   --path eval/benchmark.jsonl \
+  --strict \
   --json-output "$RESULT_DIR/benchmark-$STAMP.json"
 
 printf '%s\n' "== Réponses Codex acceptance =="
 "$CLI" eval-answer \
   --path eval/acceptance.jsonl \
+  --strict \
   --json-output "$RESULT_DIR/acceptance-$STAMP.json"
+
+printf '%s\n' "== Réponses Codex challenge (diagnostic) =="
+"$CLI" eval-answer \
+  --path eval/challenge.jsonl \
+  --strict \
+  --json-output "$RESULT_DIR/challenge-$STAMP.json"
 
 printf '%s\n' "== Réponses Codex contrat Support =="
 "$CLI" eval-answer \
   --path eval/support.jsonl \
+  --strict \
   --json-output "$RESULT_DIR/support-$STAMP.json"
 
 printf '%s\n' "== Réponses Codex contrat Actualités =="
 "$CLI" eval-answer \
   --path eval/news.jsonl \
+  --strict \
   --json-output "$RESULT_DIR/news-$STAMP.json"
 
 printf '%s\n' "Baseline terminée. Rapports :"
 printf '  %s\n' \
   "$RESULT_DIR/benchmark-$STAMP.json" \
   "$RESULT_DIR/acceptance-$STAMP.json" \
+  "$RESULT_DIR/challenge-$STAMP.json" \
   "$RESULT_DIR/support-$STAMP.json" \
   "$RESULT_DIR/news-$STAMP.json"

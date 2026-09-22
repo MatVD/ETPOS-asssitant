@@ -10,6 +10,8 @@ import etpos_assistant.evaluation as evaluation
 from etpos_assistant.evaluation import (
     BenchmarkError,
     GeneratedAnswer,
+    answer_quality_failure_reasons,
+    answer_quality_failures,
     answer_result_to_dict,
     evaluate_retrieval_case,
     load_benchmark,
@@ -46,6 +48,7 @@ def test_load_benchmark_supports_rich_schema_and_legacy_fields(tmp_path):
             "question": "Où ?",
             "answerability": "full",
             "relevant_section_groups": [["Types de règlement"]],
+            "expected_citation_groups": [["Type de Règlement"]],
             "expected_heading_paths": ["CONFIGURER ETPOS > Types de Règlement"],
             "expected_menu_paths": ["Système > Configurations > Types de règlement"],
             "required_facts": ["Système + Configurations"],
@@ -72,6 +75,7 @@ def test_load_benchmark_supports_rich_schema_and_legacy_fields(tmp_path):
     cases = load_benchmark(path)
 
     assert [case.case_id for case in cases] == ["rich", "line-2", "none"]
+    assert cases[0].expected_citation_groups == (("Type de Règlement",),)
     assert cases[0].expected_heading_paths == ("CONFIGURER ETPOS > Types de Règlement",)
     assert cases[0].expected_menu_paths == ("Système > Configurations > Types de règlement",)
     assert cases[0].history[0]["content"] == "Comment gérer les règlements ?"
@@ -238,6 +242,7 @@ async def test_generate_answer_for_case_reuses_production_history_behavior(monke
 
     class FakeProvider:
         last_metrics = None
+        last_answer_status = "full"
 
         async def stream_answer(self, *, question, sources, history):
             assert question == "Et pour la restaurer ?"
@@ -261,6 +266,7 @@ async def test_generate_answer_for_case_reuses_production_history_behavior(monke
     ]]
     assert generated.text == "Utilisez l'onglet Restaurer. [S1]"
     assert generated.citations[0]["section_id"] == 8
+    assert generated.answer_status == "full"
 
 
 def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
@@ -287,11 +293,13 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
         retrieval_latency_ms=5.0,
         generation_latency_ms=25.0,
         total_latency_ms=30.0,
+        answer_status="full",
     )
 
     answer_result = score_answer_case(answerable, generated)
 
     assert answer_result.abstention_correct
+    assert answer_result.answer_status_correct is True
     assert answer_result.fact_coverage == 1.0
     assert answer_result.menu_path_coverage == 1.0
     assert answer_result.citation_presence_correct
@@ -313,13 +321,18 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
         retrieval_latency_ms=4.0,
         generation_latency_ms=0.0,
         total_latency_ms=4.0,
+        answer_status="none",
     )
     abstention_result = score_answer_case(unanswerable, abstained)
     summary = summarize_answers([answer_result, abstention_result])
 
     assert abstention_result.abstention_correct
+    assert abstention_result.answer_status_correct is True
     assert abstention_result.citation_presence_correct
     assert summary["abstention_accuracy"] == 1.0
+    assert summary["answer_status_accuracy"] == 1.0
+    assert summary["answer_status_matches"] == 2
+    assert summary["answer_status_total"] == 2
     assert summary["fact_coverage"] == 1.0
     assert summary["menu_path_coverage"] == 1.0
     assert summary["citation_presence_accuracy"] == 1.0
@@ -327,6 +340,122 @@ def test_answer_scoring_checks_facts_menu_paths_citations_and_abstention():
     assert summary["citation_expected_coverage"] == 1.0
     assert summary["citation_evidence_coverage"] == 1.0
     assert summary["latency_p95_ms"] == 30.0
+
+
+def test_answer_scoring_rejects_wrong_documentary_status():
+    case = evaluation.BenchmarkCase(
+        case_id="partial-status",
+        category="partial",
+        question="Peut-on sauvegarder automatiquement dans le cloud ?",
+        answerability="partial",
+        relevant_section_groups=(),
+    )
+    generated = GeneratedAnswer(
+        text="ETPOS documente la sauvegarde locale.",
+        citations=(),
+        sections=(),
+        retrieval_latency_ms=1.0,
+        generation_latency_ms=2.0,
+        total_latency_ms=3.0,
+        answer_status="full",
+    )
+
+    result = score_answer_case(case, generated)
+
+    assert result.answer_status_correct is False
+    summary = summarize_answers([result])
+    assert summary["answer_status_accuracy"] == 0.0
+    assert summary["answer_status_matches"] == 0
+    assert summary["answer_status_total"] == 1
+
+
+def test_answer_quality_failures_support_strict_status_and_legacy_reports():
+    case = evaluation.BenchmarkCase(
+        case_id="legacy-status",
+        category="simple",
+        question="Comment sauvegarder ?",
+        answerability="full",
+        relevant_section_groups=(),
+    )
+    generated = GeneratedAnswer(
+        text="Réponse documentée.",
+        citations=({"source_id": "S1", "section_id": 10},),
+        sections=(_section(10, "Sauvegarde", "SÉCURITÉ ET FIABILITÉ > Sauvegarde"),),
+        retrieval_latency_ms=1.0,
+        generation_latency_ms=2.0,
+        total_latency_ms=3.0,
+        answer_status=None,
+    )
+    result = score_answer_case(case, generated)
+
+    assert answer_quality_failures([result]) == []
+    assert answer_quality_failures([result], require_status=True) == [result]
+    assert answer_quality_failure_reasons(result) == ("answer_status",)
+
+
+def test_answer_quality_failure_reasons_cover_deterministic_gate_criteria():
+    case = evaluation.BenchmarkCase(
+        case_id="strict-failure",
+        category="partial",
+        question="Question",
+        answerability="partial",
+        relevant_section_groups=(("sauvegarde",),),
+        required_facts=("sauvegarde",),
+    )
+    generated = GeneratedAnswer(
+        text="Réponse sans le fait attendu.",
+        citations=(),
+        sections=(_section(10, "Sauvegarde", "SÉCURITÉ ET FIABILITÉ > Sauvegarde"),),
+        retrieval_latency_ms=1.0,
+        generation_latency_ms=2.0,
+        total_latency_ms=3.0,
+        answer_status="full",
+    )
+    result = score_answer_case(case, generated)
+
+    assert answer_quality_failures([result], require_status=True) == [result]
+    assert answer_quality_failure_reasons(result) == (
+        "answer_status",
+        "required_facts",
+        "citation_presence",
+        "citation_expected_coverage",
+    )
+
+
+def test_answer_scoring_can_use_distinct_expected_citation_groups():
+    retrieval_section = _section(
+        20,
+        "RFID et iButtons",
+        "CONFIGURER ETPOS > RFID et iButtons (gestion de cartes/points)",
+        "Gestion de cartes RFID et points.",
+    )
+    citation_section = _section(
+        21,
+        "Consulter et gérer les points attribués",
+        "GESTION DES CARTES À POINTS > Consulter et gérer les points attribués",
+        "Les points attribués aux clients peuvent être consultés et gérés.",
+    )
+    case = evaluation.BenchmarkCase(
+        case_id="card-points",
+        category="ambiguous_realistic",
+        question="Où gérer les points ?",
+        answerability="full",
+        relevant_section_groups=(("rfid et ibuttons", "gestion de cartes", "points"),),
+        expected_citation_groups=(("gestion des cartes à points",),),
+    )
+    generated = GeneratedAnswer(
+        text="Gérez les points dans Cartes à points. [S2]",
+        citations=({"source_id": "S2", "section_id": 21},),
+        sections=(retrieval_section, citation_section),
+        retrieval_latency_ms=1.0,
+        generation_latency_ms=2.0,
+        total_latency_ms=3.0,
+    )
+
+    result = score_answer_case(case, generated)
+
+    assert result.citation_expected_coverage == 1.0
+    assert result.citation_relevance == 1.0
 
 
 def test_answer_scoring_accepts_fact_variants_without_requiring_exact_word_order():

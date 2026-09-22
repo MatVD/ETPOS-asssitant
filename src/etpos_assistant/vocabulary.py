@@ -35,6 +35,27 @@ SUPPLIER_TERMS = ("fournisseur", "fournisseurs")
 ARTICLE_TERMS = ("article", "articles")
 FAMILY_TERMS = ("famille", "familles")
 MODE_TARGET_TERMS = ACCOUNT_TERMS + TABLE_TERMS + CARD_TERMS
+GENERIC_ACCOUNT_CREATE_EXCLUSIONS = (
+    "compte courant",
+    "comptes courants",
+    "compte de vente",
+    "client",
+    "clients",
+    "fournisseur",
+    "fournisseurs",
+    "utilisateur",
+    "utilisateurs",
+    "operateur",
+    "operateurs",
+    "table",
+    "tables",
+    "carte",
+    "cartes",
+    "article",
+    "articles",
+    "famille",
+    "familles",
+)
 
 OBJECT_TERM_GROUPS = (
     ("COMPTE", ACCOUNT_TERMS),
@@ -500,6 +521,16 @@ CONCEPT_RULES = (
     ConceptRule(
         concept=CARTE_GENERIQUE,
         required_term_groups=(CARD_TERMS, CREATE_INTENT_TERMS),
+    ),
+    ConceptRule(
+        concept=COMPTE_COURANT_CLIENT,
+        required_term_groups=(ACCOUNT_TERMS, CREATE_INTENT_TERMS),
+        excluded_phrases=GENERIC_ACCOUNT_CREATE_EXCLUSIONS,
+    ),
+    ConceptRule(
+        concept=UTILISATEUR,
+        required_term_groups=(ACCOUNT_TERMS, CREATE_INTENT_TERMS),
+        excluded_phrases=GENERIC_ACCOUNT_CREATE_EXCLUSIONS,
     ),
     ConceptRule(
         concept=COMPTE_COURANT_CLIENT,

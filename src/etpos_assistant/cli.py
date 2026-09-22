@@ -28,6 +28,8 @@ from .docs_store import (
 from .docs_update import build_docs_candidate
 from .evaluation import (
     BenchmarkError,
+    answer_quality_failure_reasons,
+    answer_quality_failures,
     answer_result_to_dict,
     generate_answer_for_case,
     load_benchmark,
@@ -449,6 +451,10 @@ def _pct(value: float | None) -> str:
 def _print_answer_summary(summary: dict, *, include_latency: bool = True) -> None:
     print(f"Abstention correcte: {_pct(summary['abstention_accuracy'])}")
     print(
+        f"Statut documentaire: {_pct(summary.get('answer_status_accuracy'))} "
+        f"({summary.get('answer_status_matches', 0)}/{summary.get('answer_status_total', 0)})"
+    )
+    print(
         f"Faits obligatoires: {_pct(summary['fact_coverage'])} "
         f"({summary['fact_matches']}/{summary['fact_total']})"
     )
@@ -530,9 +536,16 @@ async def _run_eval_answer(args) -> None:
             else "menus=n/a"
         )
         citations = f"citations={result.relevant_citations}/{result.total_citations}"
+        status = (
+            "n/a"
+            if result.answer_status_correct is None
+            else "ok" if result.answer_status_correct else "ko"
+        )
+        failure_reasons = answer_quality_failure_reasons(result)
         print(
-            f"{'OK' if result.abstention_correct else 'KO'} [{case.category}] {case.case_id} "
-            f"abstention={'ok' if result.abstention_correct else 'ko'} {facts} {menus} {citations} "
+            f"{'OK' if not failure_reasons else 'KO'} [{case.category}] {case.case_id} "
+            f"abstention={'ok' if result.abstention_correct else 'ko'} "
+            f"statut={status} {facts} {menus} {citations} "
             f"{answer.total_latency_ms:.0f}ms — {case.question}"
         )
 
@@ -571,6 +584,16 @@ async def _run_eval_answer(args) -> None:
         print(f"Rapport JSON: {output_path}")
     _print_answer_summary(summary)
     print("Hallucinations: non mesurées automatiquement par cette commande.")
+
+    if args.strict:
+        failed_results = answer_quality_failures(results, require_status=True)
+        if failed_results:
+            details = "; ".join(
+                f"{result.case.case_id} "
+                f"({', '.join(answer_quality_failure_reasons(result))})"
+                for result in failed_results
+            )
+            raise SystemExit(f"Quality gate réponse échouée: {details}")
 
 
 async def _run_eval_answer_with_shutdown(args) -> None:
@@ -685,6 +708,7 @@ def cmd_rescore_answer_report(args) -> None:
         result
         for result in results
         if not result.abstention_correct
+        or result.answer_status_correct is False
         or (result.expected_facts and result.matched_facts < result.expected_facts)
         or (result.expected_menu_paths and result.matched_menu_paths < result.expected_menu_paths)
         or (
@@ -696,10 +720,16 @@ def cmd_rescore_answer_report(args) -> None:
     if review:
         print("Cas à revoir :")
         for result in review:
+            status = (
+                "n/a"
+                if result.answer_status_correct is None
+                else "ok" if result.answer_status_correct else "ko"
+            )
             print(
                 f"  - {result.case.case_id}: "
                 f"answerability={result.case.answerability} "
                 f"abstention={'ok' if result.abstention_correct else 'ko'} "
+                f"statut={status} "
                 f"faits={result.matched_facts}/{result.expected_facts} "
                 f"menus={result.matched_menu_paths}/{result.expected_menu_paths} "
                 f"citations={'ok' if result.citation_presence_correct else 'ko'} "
@@ -857,6 +887,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--json-output",
         help="Écrire un rapport JSON détaillé pour comparaison et revue humaine",
+    )
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Retourner un échec si un cas rate un critère déterministe de qualité",
     )
     p.set_defaults(func=cmd_eval_answer)
 

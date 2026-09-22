@@ -90,6 +90,9 @@ def test_prompt_prefers_supported_partial_answer_before_full_abstention():
     assert "[[ETPOS_STATUS:full]]" in SYSTEM_INSTRUCTIONS
     assert "[[ETPOS_STATUS:partial]]" in SYSTEM_INSTRUCTIONS
     assert "[[ETPOS_STATUS:none]]" in SYSTEM_INSTRUCTIONS
+    assert "valeur légale, tarifaire, contractuelle ou bancaire" in SYSTEM_INSTRUCTIONS
+    assert "qualificatifs explicites" in SYSTEM_INSTRUCTIONS
+    assert "contradiction touche un élément nécessaire" in SYSTEM_INSTRUCTIONS
 
 
 def test_prompt_includes_document_type_version_and_revision_metadata():

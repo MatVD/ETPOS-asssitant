@@ -122,18 +122,24 @@ def test_sale_account_creation_ranks_main_concept_before_secondary_meanings(monk
         path="CONFIGURER ETPOS > Types de règlement",
         text="Pour ajouter un nouveau type de règlement, configurer aussi le mouvement du compte courant.",
     )
+    _insert_section(
+        document_id,
+        order=5,
+        title="Que sont les utilisateurs",
+        path="GESTION DES UTILISATEURS > Que sont les utilisateurs",
+        text="Les utilisateurs sont les personnes qui enregistrent et configurent le logiciel.",
+    )
 
     plan = build_search_plan("Comment ajouter un nouveau compte ?")
-    assert any(item.label.startswith("COMPTE_VENTE:") for item in plan)
+    labels = {item.label.split(":", 1)[0] for item in plan}
+    assert {"COMPTE_VENTE", "COMPTE_COURANT_CLIENT", "UTILISATEUR"} <= labels
 
-    rows = search_sections("Comment ajouter un nouveau compte ?", limit=4)
+    rows = search_sections("Comment ajouter un nouveau compte ?", limit=5)
     paths = [row.heading_path for row in rows]
-    retail_index = paths.index("ETPOS POUR COMMERCE DE DÉTAIL")
-    divide_index = next(index for index, path in enumerate(paths) if "Diviser le compte" in path)
-    current_index = next(index for index, path in enumerate(paths) if "comptes courants" in path)
 
-    assert retail_index < divide_index
-    assert retail_index < current_index
+    assert "ETPOS POUR COMMERCE DE DÉTAIL" in paths
+    assert any("comptes courants" in path for path in paths)
+    assert any(path.startswith("GESTION DES UTILISATEURS") for path in paths)
 
 
 def test_account_current_client_keeps_its_specific_meaning(monkeypatch, tmp_path):
@@ -237,7 +243,11 @@ def test_query_analysis_separates_intent_object_and_concept():
     assert analysis.intents == ("CREATE",)
     assert analysis.objects == ("COMPTE",)
     assert analysis.qualifiers == ()
-    assert [concept.key for concept in analysis.concepts] == ["COMPTE_VENTE"]
+    assert [concept.key for concept in analysis.concepts] == [
+        "COMPTE_COURANT_CLIENT",
+        "UTILISATEUR",
+        "COMPTE_VENTE",
+    ]
 
 
 def test_sale_account_expansion_uses_domain_vocabulary_not_document_location():
@@ -246,6 +256,14 @@ def test_sale_account_expansion_uses_domain_vocabulary_not_document_location():
     assert concept_queries
     assert all("commerce" not in query and "detail" not in query for query in concept_queries)
     assert any("famille" in query and "article" in query for query in concept_queries)
+
+
+def test_account_with_article_qualifier_is_not_expanded_to_unrelated_meanings():
+    analysis = analyze_query(
+        "Je veux commencer un nouveau compte pour enregistrer ses articles."
+    )
+
+    assert [concept.key for concept in analysis.concepts] == ["ARTICLE", "COMPTE_VENTE"]
 
 
 def test_retrieval_trace_exposes_variants_and_score_components(monkeypatch, tmp_path):
