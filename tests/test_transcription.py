@@ -80,6 +80,10 @@ def test_transcribe_audio_file_uses_french_vad_and_hotwords(monkeypatch, tmp_pat
         SimpleNamespace(
             whisper_max_duration_seconds=60,
             whisper_language="fr",
+            whisper_model="large-v3-turbo",
+            whisper_device="cpu",
+            whisper_compute_type="int8",
+            whisper_cpu_threads=0,
         ),
     )
     monkeypatch.setattr(transcription_module, "hotwords_prompt", lambda: "ETPOS, Verifone")
@@ -102,10 +106,16 @@ def test_transcribe_audio_file_uses_french_vad_and_hotwords(monkeypatch, tmp_pat
 
     result = transcription_module.transcribe_audio_file(tmp_path / "voice.webm")
 
-    assert result == TranscriptionResult(
-        text="Comment configurer ETPOS ?",
-        duration_seconds=1.0,
-    )
+    assert result.text == "Comment configurer ETPOS ?"
+    assert result.duration_seconds == 1.0
+    assert result.timings is not None
+    assert result.timings.decode_ms >= 0
+    assert result.timings.model_ready_ms >= 0
+    assert result.timings.queue_wait_ms >= 0
+    assert result.timings.model_call_ms >= 0
+    assert result.timings.segment_iteration_ms >= 0
+    assert result.timings.reconstruction_ms >= 0
+    assert result.timings.total_ms >= 0
     assert captured["audio"] is audio
     assert captured["kwargs"] == {
         "language": "fr",

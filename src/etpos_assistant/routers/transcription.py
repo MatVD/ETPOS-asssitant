@@ -4,6 +4,7 @@ import asyncio
 import logging
 import tempfile
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import APIRouter, HTTPException, Request, status
 
@@ -96,16 +97,37 @@ async def transcribe(request: Request):
             detail="Format audio non pris en charge.",
         )
 
+    request_started = perf_counter()
+    upload_started = perf_counter()
     path = await _store_limited_audio(request, suffix)
+    upload_ms = (perf_counter() - upload_started) * 1000
+    upload_bytes = path.stat().st_size
     try:
+        processing_started = perf_counter()
         result = await asyncio.to_thread(transcribe_audio_file, path)
+        processing_ms = (perf_counter() - processing_started) * 1000
     except TranscriptionInputError as exc:
+        logger.info(
+            "Transcription refusée status=422 content_type=%s upload_bytes=%s "
+            "upload_ms=%.1f total_ms=%.1f detail=%s",
+            content_type,
+            upload_bytes,
+            upload_ms,
+            (perf_counter() - request_started) * 1000,
+            str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     except TranscriptionError as exc:
-        logger.exception("Erreur du moteur Whisper")
+        logger.exception(
+            "Erreur du moteur Whisper content_type=%s upload_bytes=%s upload_ms=%.1f total_ms=%.1f",
+            content_type,
+            upload_bytes,
+            upload_ms,
+            (perf_counter() - request_started) * 1000,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Le service de transcription est temporairement indisponible.",
@@ -113,7 +135,20 @@ async def transcribe(request: Request):
     finally:
         path.unlink(missing_ok=True)
 
-    return {
+    response_started = perf_counter()
+    response = {
         "text": result.text,
         "duration_seconds": round(result.duration_seconds, 3),
     }
+    response_build_ms = (perf_counter() - response_started) * 1000
+    logger.info(
+        "Transcription HTTP status=200 content_type=%s upload_bytes=%s upload_ms=%.1f "
+        "processing_ms=%.1f response_build_ms=%.3f total_ms=%.1f",
+        content_type,
+        upload_bytes,
+        upload_ms,
+        processing_ms,
+        response_build_ms,
+        (perf_counter() - request_started) * 1000,
+    )
+    return response

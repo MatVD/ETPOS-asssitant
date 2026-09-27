@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from pathlib import Path
@@ -13,6 +14,7 @@ from .config import settings
 from .db import init_all
 from .security import same_origin_request
 from .rag import shutdown_provider_runtime
+from .transcription import get_transcription_model
 from .routers import (
     auth_router,
     chat_router,
@@ -28,6 +30,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_all()
+    if settings.whisper_preload_on_startup:
+        await asyncio.to_thread(get_transcription_model)
     try:
         yield
     finally:

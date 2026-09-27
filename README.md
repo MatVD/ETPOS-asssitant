@@ -121,7 +121,17 @@ Le modèle est chargé paresseusement et conservé en mémoire. Pour éviter le 
 make whisper-preload
 ```
 
-En production, utiliser un cache inscriptible hors du home protégé, par exemple `ETPOS_WHISPER_DOWNLOAD_ROOT=/var/lib/etpos-assistant/whisper`. Après préchargement, `ETPOS_WHISPER_LOCAL_FILES_ONLY=true` permet de refuser tout téléchargement de modèle au runtime.
+En production, utiliser un cache inscriptible hors du home protégé, par exemple `ETPOS_WHISPER_DOWNLOAD_ROOT=/var/lib/etpos-assistant/whisper`. Après préchargement, `ETPOS_WHISPER_LOCAL_FILES_ONLY=true` permet de refuser tout téléchargement de modèle au runtime. `ETPOS_WHISPER_PRELOAD_ON_STARTUP=true` charge alors le modèle au démarrage du worker afin que le premier utilisateur ne paie pas le coût de chargement.
+
+Pour calibrer le CPU du serveur sur un même fichier audio de référence :
+
+```bash
+ETPOS_WHISPER_CPU_THREADS=0 .venv/bin/etpos-assistant whisper-benchmark /tmp/etpos-reference.webm --repeats 6
+ETPOS_WHISPER_CPU_THREADS=4 .venv/bin/etpos-assistant whisper-benchmark /tmp/etpos-reference.webm --repeats 6
+ETPOS_WHISPER_CPU_THREADS=6 .venv/bin/etpos-assistant whisper-benchmark /tmp/etpos-reference.webm --repeats 6
+```
+
+La commande conserve le texte transcrit pour chaque appel et calcule la médiane des cinq appels chauds, ce qui permet de comparer la latence sans masquer une éventuelle régression de reconnaissance métier.
 
 `make ingest` télécharge uniquement les sources activées dans `config/sources.json`. Le téléchargement n'a lieu qu'à l'ingestion, jamais à chaque question utilisateur.
 

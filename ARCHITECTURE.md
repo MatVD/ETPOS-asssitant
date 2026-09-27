@@ -102,7 +102,7 @@ Le backend utilise `faster-whisper` avec Whisper `large-v3-turbo`, langue franç
 
 L'audio n'entre ni dans `app.db` ni dans `docs.db`. Le endpoint exige la session et le CSRF, vérifie le type audio, impose une limite de taille avant et pendant la lecture du corps, vérifie la durée après décodage, traite un fichier temporaire puis le supprime systématiquement. La transcription obtenue est seulement insérée dans le champ du compositeur : l'utilisateur peut la corriger avant de l'envoyer au pipeline documentaire existant.
 
-La politique navigateur autorise uniquement le microphone pour l'origine propre avec `Permissions-Policy: microphone=(self)` ; caméra et géolocalisation restent refusées. En production, le modèle doit être préchargé dans un répertoire inscriptible tel que `/var/lib/etpos-assistant/whisper`, puis le runtime peut être configuré avec `ETPOS_WHISPER_LOCAL_FILES_ONLY=true`.
+La politique navigateur autorise uniquement le microphone pour l'origine propre avec `Permissions-Policy: microphone=(self)` ; caméra et géolocalisation restent refusées. En production, le modèle doit être préchargé dans un répertoire inscriptible tel que `/var/lib/etpos-assistant/whisper`, puis le runtime peut être configuré avec `ETPOS_WHISPER_LOCAL_FILES_ONLY=true`. `ETPOS_WHISPER_PRELOAD_ON_STARTUP=true` permet de charger ce modèle local au démarrage du worker afin d'éviter que la première dictée utilisateur supporte le coût de chargement.
 
 ## Performance et observabilité
 

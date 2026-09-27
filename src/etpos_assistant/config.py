@@ -83,6 +83,7 @@ class Settings:
         else None
     )
     whisper_local_files_only: bool = _as_bool(os.getenv("ETPOS_WHISPER_LOCAL_FILES_ONLY"), False)
+    whisper_preload_on_startup: bool = _as_bool(os.getenv("ETPOS_WHISPER_PRELOAD_ON_STARTUP"), False)
     whisper_cpu_threads: int = int(os.getenv("ETPOS_WHISPER_CPU_THREADS", "0"))
     whisper_max_upload_bytes: int = int(os.getenv("ETPOS_WHISPER_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
     whisper_max_duration_seconds: int = int(os.getenv("ETPOS_WHISPER_MAX_DURATION_SECONDS", "60"))

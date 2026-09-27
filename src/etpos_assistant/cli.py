@@ -5,6 +5,7 @@ import asyncio
 import getpass
 import json
 import shutil
+import statistics
 import subprocess
 from pathlib import Path
 from datetime import UTC, datetime
@@ -55,7 +56,13 @@ from .providers.codex_cli import codex_auth_directory, codex_environment
 from .rag import get_provider, shutdown_provider_runtime
 from .retrieval import search_sections, search_sections_with_trace
 from .security import hash_password
-from .transcription import TranscriptionError, get_transcription_model, load_hotwords
+from .transcription import (
+    TranscriptionError,
+    TranscriptionInputError,
+    get_transcription_model,
+    load_hotwords,
+    transcribe_audio_file,
+)
 
 
 def cmd_init_db(_args) -> None:
@@ -753,6 +760,65 @@ def cmd_whisper_preload(_args) -> None:
     print(f"Modèle Whisper prêt. Hotwords : {len(load_hotwords())} terme(s).")
 
 
+def cmd_whisper_benchmark(args) -> None:
+    path = Path(args.path).expanduser()
+    if not path.is_file():
+        raise SystemExit(f"Fichier audio introuvable : {path}")
+    if args.repeats < 2:
+        raise SystemExit("--repeats doit être supérieur ou égal à 2.")
+
+    print(
+        "Benchmark Whisper : "
+        f"model={settings.whisper_model} "
+        f"device={settings.whisper_device} "
+        f"compute_type={settings.whisper_compute_type} "
+        f"cpu_threads={settings.whisper_cpu_threads} "
+        f"repeats={args.repeats}"
+    )
+
+    runs: list[dict] = []
+    for index in range(1, args.repeats + 1):
+        try:
+            result = transcribe_audio_file(path)
+        except (TranscriptionError, TranscriptionInputError) as exc:
+            raise SystemExit(str(exc)) from exc
+        timings = result.timings
+        if timings is None:
+            raise SystemExit("Mesures Whisper indisponibles.")
+        row = {
+            "call": index,
+            "text": result.text,
+            "duration_seconds": round(result.duration_seconds, 3),
+            "model_cached_before_call": timings.model_cached_before_call,
+            "decode_ms": round(timings.decode_ms, 1),
+            "model_ready_ms": round(timings.model_ready_ms, 1),
+            "queue_wait_ms": round(timings.queue_wait_ms, 1),
+            "model_call_ms": round(timings.model_call_ms, 1),
+            "segment_iteration_ms": round(timings.segment_iteration_ms, 1),
+            "reconstruction_ms": round(timings.reconstruction_ms, 1),
+            "total_ms": round(timings.total_ms, 1),
+        }
+        runs.append(row)
+        print(json.dumps(row, ensure_ascii=False))
+
+    hot = runs[1:]
+    summary = {
+        "model": settings.whisper_model,
+        "device": settings.whisper_device,
+        "compute_type": settings.whisper_compute_type,
+        "cpu_threads": settings.whisper_cpu_threads,
+        "calls": len(runs),
+        "hot_calls": len(hot),
+        "hot_total_median_ms": round(statistics.median(row["total_ms"] for row in hot), 1),
+        "hot_segment_iteration_median_ms": round(
+            statistics.median(row["segment_iteration_ms"] for row in hot),
+            1,
+        ),
+        "texts_identical": len({row["text"] for row in runs}) == 1,
+    }
+    print(json.dumps({"summary": summary}, ensure_ascii=False, indent=2))
+
+
 def cmd_codex_status(_args) -> None:
     binary = shutil.which(settings.codex_binary) or (settings.codex_binary if Path(settings.codex_binary).is_file() else None)
     if not binary:
@@ -844,6 +910,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Télécharger/charger le modèle Whisper et vérifier les hotwords",
     )
     p.set_defaults(func=cmd_whisper_preload)
+
+    p = sub.add_parser(
+        "whisper-benchmark",
+        help="Mesurer Whisper de manière répétable sur un fichier audio local",
+    )
+    p.add_argument("path", help="Fichier audio de référence à transcrire")
+    p.add_argument("--repeats", type=int, default=6, help="Nombre d'appels ; le premier est froid")
+    p.set_defaults(func=cmd_whisper_benchmark)
 
     p = sub.add_parser("eval-retrieval", help="Mesurer le retrieval sur un benchmark JSONL")
     p.add_argument("--path", default="eval/benchmark.jsonl")
