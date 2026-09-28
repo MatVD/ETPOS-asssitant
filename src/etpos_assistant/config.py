@@ -73,7 +73,7 @@ class Settings:
     codex_timeout_seconds: int = int(os.getenv("CODEX_TIMEOUT_SECONDS", "120"))
     retrieval_limit: int = int(os.getenv("ETPOS_RETRIEVAL_LIMIT", "6"))
     source_char_limit: int = int(os.getenv("ETPOS_SOURCE_CHAR_LIMIT", "9000"))
-    whisper_model: str = os.getenv("ETPOS_WHISPER_MODEL", "large-v3-turbo").strip()
+    whisper_model: str = os.getenv("ETPOS_WHISPER_MODEL", "small").strip()
     whisper_device: str = os.getenv("ETPOS_WHISPER_DEVICE", "cpu").strip().lower()
     whisper_compute_type: str = os.getenv("ETPOS_WHISPER_COMPUTE_TYPE", "int8").strip().lower()
     whisper_language: str = os.getenv("ETPOS_WHISPER_LANGUAGE", "fr").strip().lower()

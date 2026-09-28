@@ -22,7 +22,7 @@ Le projet **n'utilise pas de clé OpenAI API**. Le provider de production prévu
 - Transport SSE entre le backend et le navigateur.
 - Providers : `mock` pour le diagnostic local et `codex` pour Codex CLI.
 - Citations sélectionnées et validées côté serveur.
-- Dictée locale du prompt avec `faster-whisper` + Whisper `large-v3-turbo`, sans API externe.
+- Dictée locale du prompt avec `faster-whisper` + Whisper `small` sur CPU, sans API externe.
 
 ## Pourquoi Codex CLI
 
@@ -111,7 +111,7 @@ Le backend :
 - exige la session et le jeton CSRF ;
 - limite le corps audio à 8 Mio et la durée décodée à 60 secondes par défaut ;
 - écrit l'audio dans un fichier temporaire supprimé après traitement ;
-- force la transcription française avec Whisper `large-v3-turbo`, `faster-whisper`, CPU `int8` et Silero VAD ;
+- force la transcription française avec Whisper `small`, `faster-whisper`, CPU `int8` et Silero VAD ;
 - applique les termes de `config/transcription_hotwords.txt` comme `hotwords` afin d'aider les termes métier sans coder de réponse ETPOS ;
 - renvoie uniquement le texte, qui est inséré dans le champ et reste modifiable avant envoi.
 

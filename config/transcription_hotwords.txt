@@ -4,6 +4,9 @@ ETPOS
 Verifone
 TPE
 TPV
+TPE Verifone
+terminal de paiement électronique
+TPV point de vente
 pesage
 balance
 caisse enregistreuse

@@ -80,7 +80,7 @@ def test_transcribe_audio_file_uses_french_vad_and_hotwords(monkeypatch, tmp_pat
         SimpleNamespace(
             whisper_max_duration_seconds=60,
             whisper_language="fr",
-            whisper_model="large-v3-turbo",
+            whisper_model="small",
             whisper_device="cpu",
             whisper_compute_type="int8",
             whisper_cpu_threads=0,
