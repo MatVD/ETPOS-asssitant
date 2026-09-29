@@ -80,7 +80,7 @@ Une étape implémentée et testée localement ne vaut pas validation des perfor
 | Étape | Périmètre | Message de commit | État |
 |---|---|---|---|
 | 0 | Plan et branche dédiée | `docs: plan incremental dictation implementation` | Plan initial |
-| 1 | Moteur commun sur échantillons | `refactor: share Whisper inference for audio samples` | À faire |
+| 1 | Moteur commun sur échantillons | `refactor: share Whisper inference for audio samples` | Terminé localement |
 | 2 | Benchmark des profils et simulation | `test: benchmark incremental dictation profiles` | À faire |
 | 3 | Transport PCM authentifié | `feat: add authenticated PCM dictation transport` | À faire |
 | 4 | Ordonnancement borné des aperçus | `feat: schedule bounded dictation previews` | À faire |
@@ -115,23 +115,31 @@ Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un com
 
 ### Travaux
 
-- [ ] Extraire une fonction interne `transcribe_audio_samples(...)`, ou un nom cohérent avec le module existant.
-- [ ] Conserver `transcribe_audio_file(...)` comme adaptateur : décodage, validation, appel du moteur commun et métriques du chemin fichier.
-- [ ] Réutiliser l'instance Whisper, le verrou et les options de chargement existants.
-- [ ] Introduire des profils internes contrôlés `final` et `preview`, jamais des paramètres arbitraires envoyés par le navigateur.
-- [ ] Conserver exactement le profil final actuel, notamment `beam_size=5`, français, VAD, hotwords et paramètres implicites de décodage.
-- [ ] Préparer le profil d'aperçu candidat : `beam_size=1`, `temperature=0.0`, `best_of=1`. Il évite les tentatives à plusieurs températures, mais ne garantit pas un temps maximal.
-- [ ] Conserver les positions temporelles des segments dans le résultat interne, sans activer les horodatages mot à mot par défaut ni changer la réponse HTTP réussie.
-- [ ] Permettre un résultat vide normal pour un aperçu silencieux, tout en conservant l'erreur du POST pour un enregistrement entier sans parole.
-- [ ] Rendre les métriques cohérentes avec le profil réellement utilisé, sans journaliser le texte.
+- [x] Extraire une fonction interne `transcribe_audio_samples(...)`, ou un nom cohérent avec le module existant.
+- [x] Conserver `transcribe_audio_file(...)` comme adaptateur : décodage, validation, appel du moteur commun et métriques du chemin fichier.
+- [x] Réutiliser l'instance Whisper, le verrou et les options de chargement existants.
+- [x] Introduire des profils internes contrôlés `final` et `preview`, jamais des paramètres arbitraires envoyés par le navigateur.
+- [x] Conserver exactement le profil final actuel, notamment `beam_size=5`, français, VAD, hotwords et paramètres implicites de décodage.
+- [x] Préparer le profil d'aperçu candidat : `beam_size=1`, `temperature=0.0`, `best_of=1`. Il évite les tentatives à plusieurs températures, mais ne garantit pas un temps maximal.
+- [x] Conserver les positions temporelles des segments dans le résultat interne, sans activer les horodatages mot à mot par défaut ni changer la réponse HTTP réussie.
+- [x] Permettre un résultat vide normal pour un aperçu silencieux, tout en conservant l'erreur du POST pour un enregistrement entier sans parole.
+- [x] Rendre les métriques cohérentes avec le profil réellement utilisé, sans journaliser le texte.
 
 ### Validation
 
-- [ ] Les tests existants du moteur et du POST restent valides.
-- [ ] Les arguments du profil final restent identiques à la référence.
-- [ ] Taille, durée, erreurs de décodage et suppression des fichiers temporaires restent couvertes.
-- [ ] Les tests prouvent l'absence de deuxième instance de modèle et d'inférences concurrentes.
-- [ ] Aucun changement des modules RAG/Codex.
+- [x] Les tests existants du moteur et du POST restent valides.
+- [x] Les arguments du profil final restent identiques à la référence.
+- [x] Taille, durée, erreurs de décodage et suppression des fichiers temporaires restent couvertes.
+- [x] Les tests prouvent l'absence de deuxième instance de modèle et d'inférences concurrentes.
+- [x] Aucun changement des modules RAG/Codex.
+
+**Résultat local du 29 septembre 2026 :**
+
+- `.venv/bin/pytest -q tests/test_transcription.py` : 12 tests réussis.
+- `.venv/bin/pytest -q` : 139 tests réussis.
+- `git diff --check` : aucune erreur.
+- Le contrat HTTP de succès du POST reste `text` + `duration_seconds` ; les segments et le profil restent internes au moteur.
+- Aucun benchmark VPS n'est revendiqué à cette étape.
 
 **Critère de sortie :** comportement classique préservé et moteur sur échantillons testable indépendamment du transport.
 
