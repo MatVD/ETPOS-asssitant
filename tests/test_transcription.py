@@ -438,6 +438,41 @@ async def test_transcribe_accepts_browser_audio_and_deletes_tempfile(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_transcribe_streaming_admission_preserves_post_contract_and_cleanup(monkeypatch):
+    monkeypatch.setattr(
+        router_module,
+        "settings",
+        SimpleNamespace(
+            whisper_max_upload_bytes=1024,
+            whisper_streaming_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(
+        router_module,
+        "require_api_session",
+        lambda _request: {"user_id": 1, "csrf_token": "token"},
+    )
+    monkeypatch.setattr(router_module, "require_csrf", lambda _request, _session: None)
+
+    captured: dict[str, Path] = {}
+
+    def fake_transcribe(path: Path):
+        assert path.exists()
+        captured["path"] = path
+        return TranscriptionResult(text="ETPOS", duration_seconds=0.5)
+
+    monkeypatch.setattr(router_module, "transcribe_audio_file", fake_transcribe)
+
+    response = await router_module.transcribe(
+        _request(body=b"browser-audio", content_type="audio/webm")
+    )
+
+    assert response == {"text": "ETPOS", "duration_seconds": 0.5}
+    assert not captured["path"].exists()
+    assert not router_module.dictation_admission.is_busy()
+
+
+@pytest.mark.asyncio
 async def test_transcribe_rejects_unsupported_media_type(monkeypatch):
     monkeypatch.setattr(
         router_module,

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -5,7 +7,13 @@ from starlette.responses import PlainTextResponse
 from etpos_assistant.config import settings
 from etpos_assistant.main import security_headers
 from etpos_assistant.markdown import render_safe_markdown
-from etpos_assistant.security import client_ip, hash_password, same_origin_request, verify_password
+from etpos_assistant.security import (
+    client_ip,
+    hash_password,
+    same_origin_request,
+    same_origin_websocket,
+    verify_password,
+)
 
 
 def test_password_hash_is_argon2id():
@@ -129,4 +137,37 @@ def test_same_origin_request_uses_explicit_public_origin_in_production():
         assert not same_origin_request(missing)
     finally:
         object.__setattr__(settings, "env", previous_env)
+        object.__setattr__(settings, "public_origin", previous_origin)
+
+
+def test_same_origin_websocket_requires_exact_origin():
+    previous_origin = settings.public_origin
+    try:
+        object.__setattr__(settings, "public_origin", "https://agent.matblock.com")
+        valid = SimpleNamespace(
+            headers={
+                "origin": "https://agent.matblock.com",
+                "host": "agent.matblock.com",
+            },
+            url=SimpleNamespace(scheme="wss"),
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        invalid = SimpleNamespace(
+            headers={
+                "origin": "https://evil.example",
+                "host": "agent.matblock.com",
+            },
+            url=SimpleNamespace(scheme="wss"),
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        missing = SimpleNamespace(
+            headers={"host": "agent.matblock.com"},
+            url=SimpleNamespace(scheme="wss"),
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+        assert same_origin_websocket(valid)
+        assert not same_origin_websocket(invalid)
+        assert not same_origin_websocket(missing)
+    finally:
         object.__setattr__(settings, "public_origin", previous_origin)

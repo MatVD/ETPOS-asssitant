@@ -87,6 +87,22 @@ class Settings:
     whisper_cpu_threads: int = int(os.getenv("ETPOS_WHISPER_CPU_THREADS", "0"))
     whisper_max_upload_bytes: int = int(os.getenv("ETPOS_WHISPER_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
     whisper_max_duration_seconds: int = int(os.getenv("ETPOS_WHISPER_MAX_DURATION_SECONDS", "60"))
+    whisper_streaming_enabled: bool = _as_bool(os.getenv("ETPOS_WHISPER_STREAMING_ENABLED"), False)
+    whisper_stream_max_message_bytes: int = int(
+        os.getenv("ETPOS_WHISPER_STREAM_MAX_MESSAGE_BYTES", str(16 * 1024))
+    )
+    whisper_stream_nominal_chunk_bytes: int = int(
+        os.getenv("ETPOS_WHISPER_STREAM_NOMINAL_CHUNK_BYTES", "8000")
+    )
+    whisper_stream_init_timeout_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_INIT_TIMEOUT_SECONDS", "10")
+    )
+    whisper_stream_idle_timeout_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_IDLE_TIMEOUT_SECONDS", "15")
+    )
+    whisper_stream_finalization_timeout_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_FINALIZATION_TIMEOUT_SECONDS", "120")
+    )
     whisper_hotwords_path: Path | None = (
         Path(os.environ["ETPOS_WHISPER_HOTWORDS_PATH"]).expanduser()
         if os.getenv("ETPOS_WHISPER_HOTWORDS_PATH")

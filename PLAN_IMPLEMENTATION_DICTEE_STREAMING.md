@@ -197,6 +197,8 @@ Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un com
 
 ## 7. Étape 3 — Ajouter le transport PCM sécurisé
 
+**Statut :** terminé localement.
+
 **Objectif :** recevoir une dictée PCM complète via WebSocket et produire une transcription globale finale, sans encore ajouter d'aperçus.
 
 **Fichiers concernés :**
@@ -220,25 +222,34 @@ Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un com
 
 ### Travaux
 
-- [ ] Ajouter `/api/transcribe/stream`, désactivé par défaut derrière un réglage serveur.
-- [ ] Vérifier session et origine exacte ; ne pas supposer que le middleware HTTP protège le WebSocket.
-- [ ] Exiger le CSRF dans le premier message ; refuser tout audio avant validation et ne placer aucun jeton dans l'URL.
-- [ ] Tenir compte de l'expiration et de la révocation de session pendant une connexion ouverte.
-- [ ] Borner messages, file de réception, mémoire, durée audio et délais d'initialisation/inactivité/finalisation.
-- [ ] Partir de blocs nominaux de 250 ms, soit 8 000 octets de PCM, et d'une limite expérimentale de message de 16 Kio ; conserver la limite globale configurée de 60 secondes par défaut.
-- [ ] Vérifier l'ordre des séquences, les positions, le format et le total final ; refuser les données après `finish`.
-- [ ] Mettre en place l'admission commune POST/WebSocket lorsque le streaming est activé : une dictée admise, refus explicite si occupé.
-- [ ] Conserver la propriété d'un calcul démarré jusqu'à sa fin réelle, même si sa connexion disparaît ; nettoyer l'état sans lancer de nouveau travail.
-- [ ] Préparer le cycle de vie dans FastAPI, sans modifier le shutdown du provider Codex.
-- [ ] Produire une finalisation globale avec le profil final de l'étape 1.
+- [x] Ajouter `/api/transcribe/stream`, désactivé par défaut derrière un réglage serveur.
+- [x] Vérifier session et origine exacte ; ne pas supposer que le middleware HTTP protège le WebSocket.
+- [x] Exiger le CSRF dans le premier message ; refuser tout audio avant validation et ne placer aucun jeton dans l'URL.
+- [x] Tenir compte de l'expiration et de la révocation de session pendant une connexion ouverte.
+- [x] Borner messages, file de réception, mémoire, durée audio et délais d'initialisation/inactivité/finalisation.
+- [x] Partir de blocs nominaux de 250 ms, soit 8 000 octets de PCM, et d'une limite expérimentale de message de 16 Kio ; conserver la limite globale configurée de 60 secondes par défaut.
+- [x] Vérifier l'ordre des séquences, les positions, le format et le total final ; refuser les données après `finish`.
+- [x] Mettre en place l'admission commune POST/WebSocket lorsque le streaming est activé : une dictée admise, refus explicite si occupé.
+- [x] Conserver la propriété d'un calcul démarré jusqu'à sa fin réelle, même si sa connexion disparaît ; nettoyer l'état sans lancer de nouveau travail.
+- [x] Préparer le cycle de vie dans FastAPI, sans modifier le shutdown du provider Codex.
+- [x] Produire une finalisation globale avec le profil final de l'étape 1.
 
 ### Validation
 
-- [ ] Tests d'authentification, origine, CSRF, limites, silence et formats invalides.
-- [ ] Tests de séquence incorrecte, bloc manquant, fermeture précoce et dernier bloc résiduel.
-- [ ] Tests d'occupation commune au POST et au WebSocket.
-- [ ] Aucune fuite d'état ni deuxième inférence après annulation.
-- [ ] Le contrat de succès du POST reste inchangé ; le nouveau refus si occupé est documenté et testé.
+- [x] Tests d'authentification, origine, CSRF, limites, silence et formats invalides.
+- [x] Tests de séquence incorrecte, bloc manquant, fermeture précoce et dernier bloc résiduel.
+- [x] Tests d'occupation commune au POST et au WebSocket.
+- [x] Aucune fuite d'état ni deuxième inférence après annulation.
+- [x] Le contrat de succès du POST reste inchangé ; le nouveau refus si occupé est documenté et testé.
+
+**Résultats locaux :**
+- Nouveau transport `/api/transcribe/stream` derrière `ETPOS_WHISPER_STREAMING_ENABLED=false` par défaut.
+- Protocole PCM 16 kHz mono s16le avec en-tête binaire séquence + position, contrôle `finish` et couverture finale.
+- Session, origine et CSRF validés côté WebSocket ; session revérifiée pendant la réception, avant et après la finalisation.
+- Admission commune POST/WebSocket lorsque le streaming est actif ; une inférence lancée conserve l'admission jusqu'à la fin réelle du thread.
+- Le nettoyage du fichier temporaire POST suit également le thread d'inférence en cas d'annulation.
+- Uvicorn est borné à 16 Kio par message et une file WebSocket de 4 messages dans le Makefile et l'unité systemd d'exemple.
+- `.venv/bin/pytest -q` : 169 tests réussis.
 
 **Critère de sortie :** transport complet et sécurisé, avec référence finale globale et feature flag désactivé.
 
@@ -431,6 +442,7 @@ Pour reprendre : lire ce document, inspecter `git status`, vérifier la branche 
 |---|---|---|
 | 2026-09-29 | 0 | Dépôt propre sur `main`, base `705b57b`, branche `feat/incremental-dictation` créée. Plan initial uniquement ; aucun code applicatif modifié, aucun benchmark VPS relancé. |
 | 2026-09-29 | 2 | Outillage local de comparaison `final` / `preview` et simulateur déterministe ajoutés. 10 tests ciblés, 22 tests transcription et 149 tests complets réussis ; `git diff --check` OK. Aucun benchmark Whisper réel ni accès VPS effectué ; les mesures de la machine cible restent ouvertes. |
+| 2026-09-29 | 3 | Transport PCM WebSocket sécurisé ajouté derrière feature flag désactivé : origine/session/CSRF, séquences et couverture, limites mémoire/temps, admission commune POST/WebSocket et finalisation globale. Uvicorn limite les messages à 16 Kio et la file à 4. 169 tests complets réussis localement ; aucun accès VPS ni activation du streaming. |
 
 ## 14. Références techniques du cadrage
 
