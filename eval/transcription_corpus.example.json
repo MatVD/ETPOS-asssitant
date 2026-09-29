@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "purpose": "Cadre de revue humaine pour comparer les profils Whisper final et preview sur des audios explicitement autorisés.",
+  "privacy": "Ne jamais versionner d'enregistrement privé ou personnel. Utiliser eval/transcription_audio/ et eval/transcription_corpus.local.json pour les données locales.",
+  "recommended_windows_seconds": [
+    1,
+    2,
+    4,
+    6,
+    10
+  ],
+  "review_dimensions": [
+    "mots",
+    "termes_etpos",
+    "nombres",
+    "negations",
+    "omissions",
+    "repetitions"
+  ],
+  "cases": [
+    {
+      "id": "short_no_pause",
+      "scenario": "Question courte sans pause",
+      "review_focus": [
+        "mots",
+        "omissions"
+      ]
+    },
+    {
+      "id": "clear_pause",
+      "scenario": "Question avec une pause nette",
+      "review_focus": [
+        "mots",
+        "omissions",
+        "repetitions"
+      ]
+    },
+    {
+      "id": "multiple_pauses",
+      "scenario": "Question avec plusieurs pauses",
+      "review_focus": [
+        "omissions",
+        "repetitions"
+      ]
+    },
+    {
+      "id": "oral_correction",
+      "scenario": "Correction orale en cours de phrase",
+      "review_focus": [
+        "mots",
+        "omissions",
+        "repetitions"
+      ]
+    },
+    {
+      "id": "etpos_terms",
+      "scenario": "Termes métier ETPOS et hotwords",
+      "review_focus": [
+        "termes_etpos"
+      ]
+    },
+    {
+      "id": "numbers",
+      "scenario": "Nombres, montants ou quantités",
+      "review_focus": [
+        "nombres"
+      ]
+    },
+    {
+      "id": "negation",
+      "scenario": "Phrase contenant une négation importante",
+      "review_focus": [
+        "negations"
+      ]
+    },
+    {
+      "id": "silence",
+      "scenario": "Silence sans parole exploitable",
+      "review_focus": [
+        "omissions"
+      ]
+    },
+    {
+      "id": "noise",
+      "scenario": "Bruit de fond sans contenu à inventer",
+      "review_focus": [
+        "mots",
+        "omissions"
+      ]
+    },
+    {
+      "id": "long_continuous",
+      "scenario": "Parole continue longue sans pause exploitable",
+      "review_focus": [
+        "mots",
+        "omissions",
+        "repetitions"
+      ]
+    }
+  ]
+}

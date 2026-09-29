@@ -81,7 +81,7 @@ Une étape implémentée et testée localement ne vaut pas validation des perfor
 |---|---|---|---|
 | 0 | Plan et branche dédiée | `docs: plan incremental dictation implementation` | Plan initial |
 | 1 | Moteur commun sur échantillons | `refactor: share Whisper inference for audio samples` | Terminé localement |
-| 2 | Benchmark des profils et simulation | `test: benchmark incremental dictation profiles` | À faire |
+| 2 | Benchmark des profils et simulation | `test: benchmark incremental dictation profiles` | Terminé localement ; benchmark VPS à faire |
 | 3 | Transport PCM authentifié | `feat: add authenticated PCM dictation transport` | À faire |
 | 4 | Ordonnancement borné des aperçus | `feat: schedule bounded dictation previews` | À faire |
 | 5 | Capture et interface incrémentales | `feat: add incremental voice dictation UI` | À faire |
@@ -158,23 +158,36 @@ Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un com
 
 ### Travaux
 
-- [ ] Comparer les profils final et aperçu sur des extraits de 1, 2, 4, 6 et 10 secondes.
-- [ ] Réutiliser les mêmes audios, la même configuration matérielle et les mêmes options pour les comparaisons.
-- [ ] Séparer chargement du modèle, premier passage VAD et exécutions chaudes.
-- [ ] Enregistrer modèle, profils effectifs, versions des dépendances, SHA Git et caractéristiques utiles de la machine.
-- [ ] Mesurer temps écoulé et secondes CPU cumulées ; ne pas confondre délai d'inférence et pourcentage CPU.
-- [ ] Ajouter une simulation d'arrivée des blocs toutes les 250 ms, avec arrêt explicite et moteur réel ou factice injectable.
-- [ ] Mesurer les hypothèses révisées, le retard de traitement, les appels évités et le coût cumulé par dictée.
-- [ ] Ajouter des références humaines pour la qualité finale : mots, termes ETPOS, nombres, négations, omissions et répétitions.
-- [ ] Inclure questions sans pause, pauses nettes, corrections orales, silence, bruit et parole continue longue.
-- [ ] Garder les audios et rapports contenant des données personnelles hors de Git ; ne versionner que des éléments explicitement non sensibles.
+- [x] Comparer les profils final et aperçu sur des extraits de 1, 2, 4, 6 et 10 secondes.
+- [x] Réutiliser les mêmes audios, la même configuration matérielle et les mêmes options pour les comparaisons.
+- [x] Séparer chargement du modèle, premier passage d'inférence incluant le premier passage VAD, et exécutions chaudes.
+- [x] Enregistrer modèle, profils effectifs, versions des dépendances, SHA Git et caractéristiques utiles de la machine.
+- [x] Mesurer temps écoulé et secondes CPU cumulées ; ne pas confondre délai d'inférence et pourcentage CPU.
+- [x] Ajouter une simulation d'arrivée des blocs toutes les 250 ms, avec arrêt explicite et moteur réel ou factice injectable.
+- [x] Mesurer les hypothèses révisées, le retard de traitement, les appels évités et le coût cumulé par dictée.
+- [x] Ajouter des références humaines pour la qualité finale : mots, termes ETPOS, nombres, négations, omissions et répétitions.
+- [x] Inclure questions sans pause, pauses nettes, corrections orales, silence, bruit et parole continue longue.
+- [x] Garder les audios et rapports contenant des données personnelles hors de Git ; ne versionner que des éléments explicitement non sensibles.
 
 ### Validation
 
-- [ ] Tests déterministes des métriques et du simulateur, sans téléchargement de modèle ni appel Codex.
-- [ ] Rapport distinguant fonctionnement local et performance de la machine cible.
-- [ ] Médiane, distribution et nombre d'échantillons publiés ; ne pas présenter un p95 issu de quelques essais comme une mesure robuste.
-- [ ] Une transcription identique entre plusieurs appels n'est pas assimilée à une transcription correcte.
+- [x] Tests déterministes des métriques et du simulateur, sans téléchargement de modèle ni appel Codex.
+- [x] Rapport identifiant explicitement la machine mesurée et n'impliquant aucune équivalence avec la machine cible.
+- [x] Médiane, valeurs min/max, appels bruts et nombre d'échantillons publiés ; aucun p95 n'est calculé sur ces petits effectifs.
+- [x] Une transcription identique entre plusieurs appels n'est pas assimilée à une transcription correcte.
+
+**Résultat local du 29 septembre 2026 :**
+
+- Le mode historique de `whisper-benchmark` est conservé par défaut ; `--incremental` active l'évaluation dédiée.
+- Le mode incrémental décode une seule fois l'audio, mesure séparément le chargement du modèle et un premier passage de chauffe, puis compare `final` et `preview` sur les mêmes fenêtres. L'ordre des deux profils alterne entre répétitions afin de limiter un biais d'ordre systématique.
+- Le rapport JSON contient les temps internes Whisper, le temps wall-clock englobant l'appel, les secondes CPU processus, les textes pour revue humaine, le nombre de segments, la configuration Whisper, les versions `faster-whisper` / `ctranslate2`, le SHA Git et les informations matérielles disponibles.
+- Le simulateur est purement déterministe : blocs conceptuels de 250 ms par défaut, une seule inférence active, demande d'aperçu en attente remplaçable, arrêt explicite et finalisation prioritaire après la fin d'une inférence déjà active. Il mesure demandes, exécutions, demandes obsolètes, résultats obsolètes, retard audio, coût cumulé, premier résultat/texte et délai après arrêt.
+- `eval/transcription_corpus.example.json` décrit les dix scénarios de revue requis sans embarquer d'audio. `eval/transcription_audio/` et `eval/transcription_corpus.local.json` sont ignorés par Git ; `eval/results/*.json` l'était déjà.
+- `.venv/bin/pytest -q tests/test_transcription_evaluation.py` : 10 tests réussis.
+- `.venv/bin/pytest -q tests/test_transcription.py tests/test_transcription_evaluation.py` : 22 tests réussis.
+- `.venv/bin/pytest -q` : 149 tests réussis.
+- `git diff --check` : aucune erreur.
+- Aucun benchmark Whisper réel n'a été exécuté dans cette étape locale. Aucun résultat du Mac n'est présenté comme représentatif du VPS Intel Haswell, et le VPS n'a pas été consulté.
 
 **Critère de sortie local :** outillage reproductible et testé, commitable sans résultat VPS inventé.
 
@@ -417,6 +430,7 @@ Pour reprendre : lire ce document, inspecter `git status`, vérifier la branche 
 | Date | Étape | Observation |
 |---|---|---|
 | 2026-09-29 | 0 | Dépôt propre sur `main`, base `705b57b`, branche `feat/incremental-dictation` créée. Plan initial uniquement ; aucun code applicatif modifié, aucun benchmark VPS relancé. |
+| 2026-09-29 | 2 | Outillage local de comparaison `final` / `preview` et simulateur déterministe ajoutés. 10 tests ciblés, 22 tests transcription et 149 tests complets réussis ; `git diff --check` OK. Aucun benchmark Whisper réel ni accès VPS effectué ; les mesures de la machine cible restent ouvertes. |
 
 ## 14. Références techniques du cadrage
 
