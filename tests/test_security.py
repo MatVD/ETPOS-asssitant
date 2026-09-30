@@ -73,7 +73,12 @@ async def test_security_headers_match_documented_policy():
     assert response.headers["Referrer-Policy"] == "same-origin"
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["Permissions-Policy"] == "camera=(), microphone=(self), geolocation=()"
-    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    csp = response.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in csp
+    assert "connect-src 'self'" in csp
+    assert "connect-src *" not in csp
+    assert "ws:" not in csp
+    assert "wss:" not in csp
 
 
 @pytest.mark.asyncio
@@ -169,5 +174,34 @@ def test_same_origin_websocket_requires_exact_origin():
         assert same_origin_websocket(valid)
         assert not same_origin_websocket(invalid)
         assert not same_origin_websocket(missing)
+    finally:
+        object.__setattr__(settings, "public_origin", previous_origin)
+
+
+def test_same_origin_websocket_trusts_forwarded_proto_only_from_loopback_proxy():
+    previous_origin = settings.public_origin
+    try:
+        object.__setattr__(settings, "public_origin", "")
+        proxied = SimpleNamespace(
+            headers={
+                "origin": "https://agent.matblock.com",
+                "host": "agent.matblock.com",
+                "x-forwarded-proto": "https",
+            },
+            url=SimpleNamespace(scheme="ws"),
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        direct = SimpleNamespace(
+            headers={
+                "origin": "https://agent.matblock.com",
+                "host": "agent.matblock.com",
+                "x-forwarded-proto": "https",
+            },
+            url=SimpleNamespace(scheme="ws"),
+            client=SimpleNamespace(host="198.51.100.20"),
+        )
+
+        assert same_origin_websocket(proxied)
+        assert not same_origin_websocket(direct)
     finally:
         object.__setattr__(settings, "public_origin", previous_origin)

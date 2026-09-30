@@ -56,7 +56,27 @@ Les identifiants ChatGPT/Codex sont sensibles. `CODEX_HOME`, `ETPOS_CODEX_APP_HO
 
 ## En-têtes applicatifs
 
-L'application ajoute notamment : CSP restrictive, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Permissions-Policy` restrictive et `frame-ancestors 'none'`. `same-origin` est volontaire : le contrôle anti-CSRF du login peut utiliser `Referer` comme signal de même origine lorsque `Origin` n'est pas envoyé, tout en évitant d'envoyer le référent vers un site externe. La dictée autorise explicitement `microphone=(self)` uniquement pour l'origine ETPOS Assistant ; caméra et géolocalisation restent refusées. L'audio de dictée est borné, traité dans un fichier temporaire et supprimé après transcription ; il n'est pas persisté dans les bases applicatives.
+L'application ajoute notamment : CSP restrictive, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Permissions-Policy` restrictive et `frame-ancestors 'none'`. `same-origin` est volontaire : le contrôle anti-CSRF du login peut utiliser `Referer` comme signal de même origine lorsque `Origin` n'est pas envoyé, tout en évitant d'envoyer le référent vers un site externe. La dictée autorise explicitement `microphone=(self)` uniquement pour l'origine ETPOS Assistant ; caméra et géolocalisation restent refusées. La CSP conserve `connect-src 'self'` sans joker ; toute exception WebSocket future doit être limitée à l'origine exacte réellement validée dans les navigateurs ciblés.
+
+## Dictée HTTP et WebSocket
+
+Le chemin POST classique reste la référence. Il exige session + CSRF, borne type, taille et durée, utilise un fichier temporaire supprimé après transcription et ne persiste jamais l'audio.
+
+Le chemin incrémental `/api/transcribe/stream` reste désactivé par défaut. Lorsqu'il est activé :
+
+- l'origine WebSocket doit correspondre exactement à l'origine publique attendue ;
+- une session valide est requise avant admission ;
+- le premier message applicatif `init` doit contenir le CSRF attendu ;
+- le flux est PCM mono 16 kHz s16le ; séquence et position absolue doivent être contiguës ;
+- chaque message est borné à 16 Kio et la durée totale reprend la limite Whisper globale ;
+- le frontend applique un plafond de backpressure correspondant à quatre messages maximum sur `WebSocket.bufferedAmount` ;
+- Uvicorn est préparé avec `websockets-sansio`, qui suspend la lecture réseau jusqu'à consommation du message ASGI courant ; l'ancienne option `ws_max_queue` n'est pas utilisée comme garantie de sécurité ;
+- avec un worker, l'admission commune POST/WebSocket autorise une seule dictée lourde à la fois. Un POST concurrent reçoit HTTP 409 ; un WebSocket concurrent reçoit `busy` puis une fermeture 1013 ;
+- les erreurs de protocole utilisent une fermeture de politique 1008 ; un timeout de finalisation utilise 1013 et une indisponibilité interne de transcription utilise 1011.
+
+Le PCM du WebSocket reste uniquement en mémoire pendant la session. Les logs de dictée contiennent des tailles, positions, durées, compteurs, coûts et identifiants techniques aléatoires ; ils ne doivent jamais journaliser l'audio, le texte transcrit, le CSRF, le cookie de session ou les credentials Codex. Les aperçus ne sont jamais considérés comme du texte final.
+
+`ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED` reste lui aussi désactivé tant que la segmentation par pauses n'a pas démontré une qualité acceptable et un gain mesuré sur la machine cible. En cas d'incohérence de couverture ou d'échec d'une portion, la finalisation globale reste le fallback.
 
 ## Production
 

@@ -6,7 +6,7 @@ install:
 	.venv/bin/python -m pip install -e '.[dev]'
 
 dev:
-	.venv/bin/uvicorn etpos_assistant.main:app --host 127.0.0.1 --port 8787 --reload --ws-max-size 16384 --ws-max-queue 4
+	.venv/bin/uvicorn etpos_assistant.main:app --host 127.0.0.1 --port 8787 --reload --ws websockets-sansio --ws-max-size 16384
 
 test:
 	.venv/bin/pytest -q

@@ -86,7 +86,7 @@ Une étape implémentée et testée localement ne vaut pas validation des perfor
 | 4 | Ordonnancement borné des aperçus | `feat: schedule bounded dictation previews` | Terminé localement |
 | 5 | Capture et interface incrémentales | `feat: add incremental voice dictation UI` | Terminé localement ; validation navigateur restante |
 | 6 | Finalisation aux pauses | `feat: finalize dictation at validated speech pauses` | Terminé localement ; activation bloquée avant validation qualité/performance |
-| 7 | Préparation de l'activation et du rollback | `chore: prepare streaming dictation rollout and rollback` | À faire |
+| 7 | Préparation de l'activation et du rollback | `chore: prepare streaming dictation rollout and rollback` | Préparation locale terminée ; navigateurs, wheel et VPS à valider |
 
 Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un commit dans le contenu de ce même commit. Le message ci-dessus identifie chaque jalon.
 
@@ -435,26 +435,40 @@ Paramètres candidats uniquement : premier calcul vers 1 seconde de parole, dép
 
 ### Travaux
 
-- [ ] Garder le streaming désactivé par défaut jusqu'à validation.
-- [ ] Documenter paramètres, limites, admission unique et conséquences pour plusieurs utilisateurs.
-- [ ] Préparer un chemin WebSocket Nginx dédié avec les en-têtes d'upgrade, sans toucher au SSE du chat.
-- [ ] Choisir et tester explicitement l'implémentation WebSocket Uvicorn avant de fixer ses limites de messages et de file.
+- [x] Garder le streaming désactivé par défaut jusqu'à validation.
+- [x] Documenter paramètres, limites, admission unique et conséquences pour plusieurs utilisateurs.
+- [x] Préparer un chemin WebSocket Nginx dédié avec les en-têtes d'upgrade, sans toucher au SSE du chat.
+- [x] Choisir et tester explicitement l'implémentation WebSocket Uvicorn avant de fixer ses limites de messages et de file.
 - [ ] Vérifier la CSP dans les navigateurs ciblés ; si nécessaire, ajouter uniquement l'origine WebSocket exacte issue d'une configuration serveur validée, jamais un joker.
-- [ ] Vérifier que les nouveaux fichiers statiques sont inclus dans le package distribué.
-- [ ] Documenter supervision, erreurs attendues et absence de contenu sensible dans les logs.
-- [ ] Préparer une recette VPS : mesures de référence, activation limitée, contrôles et retour arrière.
-- [ ] Décrire le rollback : désactiver le streaming, retrouver le POST classique et conserver le même modèle, sans migration.
-- [ ] Lancer les tests locaux pertinents et contrôler le diff final ; découper les suites si le bridge impose une durée maximale.
+- [ ] Vérifier que les nouveaux fichiers statiques sont inclus dans un wheel réellement construit.
+- [x] Documenter supervision, erreurs attendues et absence de contenu sensible dans les logs.
+- [x] Préparer une recette VPS : mesures de référence, activation limitée, contrôles et retour arrière.
+- [x] Décrire le rollback : désactiver le streaming, retrouver le POST classique et conserver le même modèle, sans migration.
+- [x] Lancer les tests locaux pertinents et contrôler le diff final ; découper les suites si le bridge impose une durée maximale.
 
 ### Validation
 
-- [ ] Mode classique fonctionnel avec streaming désactivé.
-- [ ] Tests de sécurité et de cycle de vie réussis.
-- [ ] Aucun changement non nécessaire du déploiement, du RAG ou de Codex.
-- [ ] Résultats locaux documentés et cases VPS laissées ouvertes tant qu'elles ne sont pas réellement vérifiées.
+- [x] Mode classique fonctionnel avec streaming désactivé.
+- [x] Tests de sécurité et de cycle de vie réussis.
+- [x] Aucun changement non nécessaire du déploiement, du RAG ou de Codex.
+- [x] Résultats locaux documentés et cases VPS laissées ouvertes tant qu'elles ne sont pas réellement vérifiées.
 - [ ] Autorisation distincte obtenue avant toute modification distante, activation ou push.
 
-**Critère de sortie :** préparation locale livrée. Le déploiement effectif et la validation VPS restent des opérations séparées ; commiter un exemple de configuration ne prouve pas qu'il fonctionne en production.
+**Résultat local du 30 septembre 2026 :**
+
+- Les deux flags `ETPOS_WHISPER_STREAMING_ENABLED` et `ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED` restent `false` par défaut ; `.env.example` n'est pas modifié.
+- Uvicorn local est en version 0.49.0 avec `websockets` 17.1. Le chemin legacy `websockets` déclenche des avertissements de dépréciation via `websockets.legacy`. Le rollout sélectionne donc explicitement `websockets-sansio`.
+- `websockets-sansio` applique `ws_max_size=16384` et suspend la lecture du transport après remise d'un message jusqu'à sa consommation ASGI. Il n'utilise pas `ws_max_queue` : la borne `max_queue_messages=4` reste une politique applicative annoncée au frontend et appliquée à `WebSocket.bufferedAmount`, pas une prétendue file Uvicorn.
+- L'exemple systemd reste à un worker. L'exemple Nginx ajoute uniquement `location = /api/transcribe/stream` avec `Upgrade` / `Connection`, tandis que `location /` reste inchangé pour le chat SSE.
+- La CSP locale reste `connect-src 'self'`, sans `ws:`, `wss:` ni joker. Le comportement réel doit encore être vérifié sur Brave/Chromium, Safari et Firefox avant activation.
+- La déclaration setuptools `static/js/*.js` et la présence de `voice-stream.js` / `voice-worklet.js` sont testées. La construction d'un wheel réel n'a pas pu être validée dans le sandbox Hermes : le venv ne contient pas `setuptools` et l'isolation de build ne peut pas récupérer `setuptools>=75`.
+- `tests/test_streaming_rollout.py` verrouille choix Uvicorn, backpressure Sans-I/O, exemples systemd/Nginx, flags désactivés par défaut et package-data.
+- `.venv/bin/pytest -q tests/test_streaming_rollout.py tests/test_security.py tests/test_transcription_stream.py tests/test_transcription.py tests/test_chat_ux.py` : 59 tests réussis.
+- `node tests/js/test_voice_stream.js` et les trois `node --check` : réussis.
+- `.venv/bin/pytest -q` : 190 tests réussis.
+- Aucun accès VPS, push, merge, changement de RAG/Codex ou activation n'a été effectué.
+
+**Critère de sortie local :** préparation locale livrée avec rollback documenté et configuration d'exemple testée. La validation navigateurs, le wheel construit, le déploiement effectif et la recette VPS restent des opérations séparées.
 
 **Commit :** `chore: prepare streaming dictation rollout and rollback`.
 
@@ -502,6 +516,8 @@ Pour reprendre : lire ce document, inspecter `git status`, vérifier la branche 
 | 2026-09-29 | 3 | Transport PCM WebSocket sécurisé ajouté derrière feature flag désactivé : origine/session/CSRF, séquences et couverture, limites mémoire/temps, admission commune POST/WebSocket et finalisation globale. Uvicorn limite les messages à 16 Kio et la file à 4. 169 tests complets réussis localement ; aucun accès VPS ni activation du streaming. |
 | 2026-09-30 | 4 | Ordonnanceur borné d'aperçus ajouté : une inférence active, une demande remplaçable, réception audio concurrente, résultats obsolètes ignorés, `partial` révisé et finalisation globale prioritaire. 24 tests streaming et 175 tests complets réussis ; aucun benchmark Whisper réel ni accès VPS. La cadence 1,0 / 2,5 / 10,0 s reste provisoire. |
 | 2026-09-30 | 5 | AudioWorklet et contrôleur WebSocket intégrés au compositeur avec repli MediaRecorder décidé avant capture, aperçu remplaçable, flush résiduel, backpressure, insertion finale protégée contre les modifications utilisateur et limites fournies par le serveur. Tests JS comportementaux, 24 tests streaming et 175 tests complets réussis. Validation navigateurs réels et mesures de latence encore ouvertes ; aucun accès VPS. |
+| 2026-09-30 | 6 | Adaptateur Silero borné, frontières de pause absolues et finalisation `FINAL` de portions contiguës ajoutés derrière flag désactivé, avec fallback global et comparaison A/B 500/600/700 ms. 43 tests ciblés et 184 tests complets réussis. Validation qualité/performance sur vrais audios et VPS encore ouverte. |
+| 2026-09-30 | 7 | Préparation locale du rollout : `websockets-sansio` sélectionné explicitement pour Uvicorn 0.49.0, emplacement Nginx WebSocket isolé, systemd maintenu à un worker, sécurité/supervision/rollback documentés et tests de configuration ajoutés. 59 tests ciblés, tests JS/Node et 190 tests complets réussis. CSP navigateurs, wheel construit, activation et recette VPS restent ouvertes ; aucun accès distant ni push. |
 
 ## 14. Références techniques du cadrage
 
