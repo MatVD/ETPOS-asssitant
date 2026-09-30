@@ -21,9 +21,11 @@ from .transcription import (
     get_transcription_model,
     transcribe_audio_samples,
 )
+from .transcription_vad import SileroPauseDetector
 
 DEFAULT_WINDOW_SECONDS = (1.0, 2.0, 4.0, 6.0, 10.0)
 DEFAULT_BLOCK_SECONDS = 0.25
+DEFAULT_PAUSE_MS_VALUES = (500, 600, 700)
 
 TranscriptionEngine = Callable[..., TranscriptionResult]
 
@@ -736,6 +738,181 @@ def simulation_report_to_dict(report: SimulationReport) -> dict[str, Any]:
     }
 
 
+
+def compare_pause_finalization(
+    audio: Any,
+    *,
+    pause_ms_values: Sequence[int] = DEFAULT_PAUSE_MS_VALUES,
+    min_portion_seconds: float = 2.0,
+    block_seconds: float = DEFAULT_BLOCK_SECONDS,
+    engine: TranscriptionEngine = transcribe_audio_samples,
+    detector_factory: Callable[..., SileroPauseDetector] = SileroPauseDetector,
+) -> dict[str, Any]:
+    if min_portion_seconds <= 0:
+        raise ValueError("min_portion_seconds doit être strictement positif.")
+    if block_seconds <= 0:
+        raise ValueError("block_seconds doit être strictement positif.")
+    normalized_pause_ms = tuple(int(value) for value in pause_ms_values)
+    if not normalized_pause_ms or any(value <= 0 for value in normalized_pause_ms):
+        raise ValueError("Les seuils de pause doivent être strictement positifs.")
+
+    global_final = measure_inference(
+        audio,
+        TranscriptionProfile.FINAL,
+        engine=engine,
+    )
+    min_portion_samples = max(
+        1,
+        int(round(min_portion_seconds * AUDIO_SAMPLE_RATE)),
+    )
+    block_samples = max(1, int(round(block_seconds * AUDIO_SAMPLE_RATE)))
+    strategies: list[dict[str, Any]] = []
+
+    for pause_ms in normalized_pause_ms:
+        detector = detector_factory(pause_ms=pause_ms)
+        committed_sample = 0
+        boundaries: list[int] = []
+
+        for end_sample in range(block_samples, len(audio) + block_samples, block_samples):
+            end_sample = min(end_sample, len(audio))
+            window_start = max(0, end_sample - detector.window_samples)
+            confirmed = detector.consider_window(
+                audio[window_start:end_sample],
+                window_start_sample=window_start,
+                total_samples=end_sample,
+                minimum_boundary_sample=committed_sample,
+            )
+            if (
+                confirmed is not None
+                and confirmed.boundary_sample - committed_sample
+                >= min_portion_samples
+            ):
+                boundaries.append(confirmed.boundary_sample)
+                committed_sample = confirmed.boundary_sample
+            if end_sample == len(audio):
+                break
+
+        portions: list[dict[str, Any]] = []
+        texts: list[str] = []
+        total_ms = 0.0
+        total_cpu_seconds = 0.0
+        start_sample = 0
+        failed = False
+
+        for boundary_sample in boundaries:
+            measurement = measure_inference(
+                audio[start_sample:boundary_sample],
+                TranscriptionProfile.FINAL,
+                engine=engine,
+            )
+            portions.append(
+                {
+                    "start_sample": start_sample,
+                    "end_sample": boundary_sample,
+                    "start_seconds": start_sample / AUDIO_SAMPLE_RATE,
+                    "end_seconds": boundary_sample / AUDIO_SAMPLE_RATE,
+                    "measurement": _measurement_to_dict(measurement),
+                }
+            )
+            total_ms += measurement.total_ms
+            total_cpu_seconds += measurement.process_cpu_seconds
+            if measurement.error is not None:
+                failed = True
+                break
+            if measurement.text:
+                texts.append(measurement.text)
+            start_sample = boundary_sample
+
+        terminal: dict[str, Any]
+        terminal_ms = 0.0
+        if failed:
+            terminal = {
+                "mode": "fallback_global",
+                "start_sample": 0,
+                "end_sample": len(audio),
+                "measurement": _measurement_to_dict(global_final),
+            }
+            terminal_text = global_final.text
+            total_ms += global_final.total_ms
+            total_cpu_seconds += global_final.process_cpu_seconds
+            terminal_ms = global_final.total_ms
+        else:
+            if start_sample < len(audio):
+                terminal_measurement = measure_inference(
+                    audio[start_sample:],
+                    TranscriptionProfile.FINAL,
+                    engine=engine,
+                )
+                terminal = {
+                    "mode": "remainder",
+                    "start_sample": start_sample,
+                    "end_sample": len(audio),
+                    "measurement": _measurement_to_dict(terminal_measurement),
+                }
+                terminal_ms = terminal_measurement.total_ms
+                total_ms += terminal_measurement.total_ms
+                total_cpu_seconds += terminal_measurement.process_cpu_seconds
+                if terminal_measurement.error is not None:
+                    terminal = {
+                        "mode": "fallback_global",
+                        "start_sample": 0,
+                        "end_sample": len(audio),
+                        "measurement": _measurement_to_dict(global_final),
+                    }
+                    terminal_text = global_final.text
+                    total_ms += global_final.total_ms
+                    total_cpu_seconds += global_final.process_cpu_seconds
+                    terminal_ms += global_final.total_ms
+                else:
+                    if terminal_measurement.text:
+                        texts.append(terminal_measurement.text)
+                    terminal_text = " ".join(texts).strip()
+            else:
+                terminal = {
+                    "mode": "covered_by_portions",
+                    "start_sample": len(audio),
+                    "end_sample": len(audio),
+                    "measurement": None,
+                }
+                terminal_text = " ".join(texts).strip()
+
+        strategies.append(
+            {
+                "pause_ms": pause_ms,
+                "min_portion_seconds": min_portion_seconds,
+                "boundaries_samples": boundaries,
+                "boundaries_seconds": [
+                    sample / AUDIO_SAMPLE_RATE for sample in boundaries
+                ],
+                "portion_finalizations": portions,
+                "terminal_final": terminal,
+                "terminal_text": terminal_text,
+                "cumulative_inference_ms": total_ms,
+                "cumulative_process_cpu_seconds": total_cpu_seconds,
+                "time_after_stop_ms": terminal_ms,
+                "final_call_count": len(portions)
+                + (1 if terminal.get("measurement") is not None else 0),
+            }
+        )
+
+    return {
+        "reference_global_final": _measurement_to_dict(global_final),
+        "strategies": strategies,
+        "quality_review": {
+            "requires_human_review": True,
+            "dimensions": [
+                "mots",
+                "termes_etpos",
+                "nombres",
+                "negations",
+                "corrections_orales",
+                "omissions",
+                "repetitions",
+            ],
+        },
+    }
+
+
 def run_incremental_benchmark(
     path: Path,
     *,
@@ -744,10 +921,13 @@ def run_incremental_benchmark(
     preview_request_times_seconds: Sequence[float] | None = None,
     simulation_stop_at_seconds: float | None = None,
     block_seconds: float = DEFAULT_BLOCK_SECONDS,
+    pause_ms_values: Sequence[int] | None = None,
+    min_portion_seconds: float = 2.0,
     project_root: Path | None = None,
     engine: TranscriptionEngine = transcribe_audio_samples,
     model_loader: Callable[[], Any] = get_transcription_model,
     audio_decoder: Callable[..., Any] | None = None,
+    pause_detector_factory: Callable[..., SileroPauseDetector] = SileroPauseDetector,
 ) -> dict[str, Any]:
     if audio_decoder is None:
         try:
@@ -885,5 +1065,15 @@ def run_incremental_benchmark(
             block_seconds=block_seconds,
         )
         report["simulation"] = simulation_report_to_dict(simulation)
+
+    if pause_ms_values is not None:
+        report["pause_finalization_comparison"] = compare_pause_finalization(
+            audio,
+            pause_ms_values=pause_ms_values,
+            min_portion_seconds=min_portion_seconds,
+            block_seconds=block_seconds,
+            engine=engine,
+            detector_factory=pause_detector_factory,
+        )
 
     return report

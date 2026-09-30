@@ -809,3 +809,169 @@ async def test_websocket_emits_replaceable_partial_before_global_final(monkeypat
         stream_module.TranscriptionProfile.PREVIEW,
         stream_module.TranscriptionProfile.FINAL,
     ]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_finalizes_portion_with_final_profile_and_contiguous_coverage():
+    calls: list[tuple[stream_module.TranscriptionProfile, int]] = []
+
+    def engine(samples, *, profile):
+        calls.append((profile, len(samples)))
+        return TranscriptionResult(
+            text=f"final-{len(samples)}",
+            duration_seconds=len(samples) / 10,
+            profile=profile,
+        )
+
+    scheduler = stream_module.PreviewScheduler(
+        policy=stream_module.PreviewPolicy(
+            first_samples=100,
+            interval_samples=100,
+            suspend_samples=1000,
+        ),
+        engine=engine,
+        converter=lambda pcm: pcm,
+    )
+
+    assert scheduler.start_portion(
+        b"abcd",
+        start_sample=0,
+        end_sample=4,
+    )
+    await scheduler.wait_for_completion()
+    assert scheduler.collect_completed(current_total_samples=8) is None
+
+    assert scheduler.finalized_portions == (
+        stream_module.FinalizedPortion(
+            start_sample=0,
+            end_sample=4,
+            text="final-4",
+            elapsed_ms=pytest.approx(scheduler.finalized_portions[0].elapsed_ms),
+        ),
+    )
+    assert scheduler.finalized_coverage_samples == 4
+    assert calls == [(stream_module.TranscriptionProfile.FINAL, 4)]
+
+    with pytest.raises(ValueError, match="contiguës"):
+        scheduler.start_portion(
+            b"xx",
+            start_sample=5,
+            end_sample=7,
+        )
+
+
+def test_finalize_stream_audio_reuses_finalized_portions_and_transcribes_only_remainder(
+    monkeypatch,
+):
+    limits = stream_module.StreamLimits(
+        max_duration_seconds=10,
+        max_samples=160000,
+        max_pcm_bytes=320000,
+        max_message_bytes=16384,
+        nominal_chunk_bytes=8000,
+    )
+    buffer = stream_module.PCMStreamBuffer(limits)
+    first_pcm = b"\x00\x00" * 6000
+    second_pcm = b"\x00\x00" * 6000
+    buffer.append_frame(stream_module.encode_pcm_frame(0, 0, first_pcm))
+    buffer.append_frame(stream_module.encode_pcm_frame(1, 6000, second_pcm))
+    buffer.finish(last_sequence=1, total_samples=12000)
+
+    scheduler = stream_module.PreviewScheduler(
+        policy=stream_module.PreviewPolicy(
+            first_samples=100,
+            interval_samples=100,
+            suspend_samples=1000,
+        ),
+        converter=lambda value: value,
+    )
+    scheduler._finalized_portions.append(
+        stream_module.FinalizedPortion(
+            start_sample=0,
+            end_sample=8000,
+            text="première portion",
+            elapsed_ms=12.0,
+        )
+    )
+
+    converted: list[int] = []
+    transcribed: list[int] = []
+
+    def convert(value):
+        converted.append(len(value))
+        return value
+
+    def transcribe(samples, *, profile):
+        assert profile is stream_module.TranscriptionProfile.FINAL
+        transcribed.append(len(samples))
+        return TranscriptionResult(
+            text="reste terminal",
+            duration_seconds=0.25,
+            profile=profile,
+        )
+
+    monkeypatch.setattr(stream_module, "pcm16le_to_float32", convert)
+    monkeypatch.setattr(stream_module, "silero_contains_speech", lambda _audio: True)
+    monkeypatch.setattr(stream_module, "transcribe_audio_samples", transcribe)
+
+    result, mode = stream_module.finalize_stream_audio(
+        buffer,
+        scheduler,
+        pause_enabled=True,
+    )
+
+    assert mode == "portions"
+    assert result.text == "première portion reste terminal"
+    assert converted == [8000]
+    assert transcribed == [8000]
+
+
+def test_finalize_stream_audio_falls_back_to_global_on_portion_error(monkeypatch):
+    limits = stream_module.StreamLimits(
+        max_duration_seconds=10,
+        max_samples=160000,
+        max_pcm_bytes=320000,
+        max_message_bytes=16384,
+        nominal_chunk_bytes=8000,
+    )
+    buffer = stream_module.PCMStreamBuffer(limits)
+    pcm = b"\x00\x00" * 4000
+    buffer.append_frame(stream_module.encode_pcm_frame(0, 0, pcm))
+    buffer.finish(last_sequence=0, total_samples=4000)
+
+    scheduler = stream_module.PreviewScheduler(
+        policy=stream_module.PreviewPolicy(
+            first_samples=100,
+            interval_samples=100,
+            suspend_samples=1000,
+        ),
+        converter=lambda value: value,
+    )
+    scheduler._portion_error = "frontière incertaine"
+
+    monkeypatch.setattr(stream_module, "pcm16le_to_float32", lambda value: value)
+
+    calls = 0
+
+    def transcribe(samples, *, profile):
+        nonlocal calls
+        calls += 1
+        assert len(samples) == len(pcm)
+        assert profile is stream_module.TranscriptionProfile.FINAL
+        return TranscriptionResult(
+            text="final global",
+            duration_seconds=0.25,
+            profile=profile,
+        )
+
+    monkeypatch.setattr(stream_module, "transcribe_audio_samples", transcribe)
+
+    result, mode = stream_module.finalize_stream_audio(
+        buffer,
+        scheduler,
+        pause_enabled=True,
+    )
+
+    assert mode == "global"
+    assert result.text == "final global"
+    assert calls == 1

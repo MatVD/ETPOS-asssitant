@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ from etpos_assistant.transcription_evaluation import (
     InferenceMeasurement,
     benchmark_profiles,
     benchmark_run_to_dict,
+    compare_pause_finalization,
     extract_audio_windows,
     measure_inference,
     parse_seconds_csv,
@@ -453,3 +455,64 @@ def test_report_serialization_is_json_safe_without_real_whisper(tmp_path):
     serialized_simulation = simulation_report_to_dict(simulation)
     assert serialized_simulation["events"][-1]["event"] == "final_result"
     json.dumps(serialized_simulation, ensure_ascii=False)
+
+
+def test_compare_pause_finalization_reports_global_portions_and_terminal_separately():
+    audio = [0.0] * (3 * AUDIO_SAMPLE_RATE)
+    calls: list[tuple[TranscriptionProfile, int]] = []
+
+    def engine(window, *, profile):
+        calls.append((profile, len(window)))
+        return _result(
+            text=f"{profile.value}-{len(window)}",
+            profile=profile,
+            duration_seconds=len(window) / AUDIO_SAMPLE_RATE,
+        )
+
+    class FakeDetector:
+        window_samples = 3 * AUDIO_SAMPLE_RATE
+
+        def __init__(self, *, pause_ms):
+            self.pause_ms = pause_ms
+            self.emitted = False
+
+        def consider_window(
+            self,
+            _audio,
+            *,
+            window_start_sample,
+            total_samples,
+            minimum_boundary_sample,
+        ):
+            assert window_start_sample >= 0
+            assert minimum_boundary_sample >= 0
+            if not self.emitted and total_samples >= 2 * AUDIO_SAMPLE_RATE:
+                self.emitted = True
+                return SimpleNamespace(
+                    boundary_sample=int(1.5 * AUDIO_SAMPLE_RATE)
+                )
+            return None
+
+    report = compare_pause_finalization(
+        audio,
+        pause_ms_values=(500, 700),
+        min_portion_seconds=1.0,
+        block_seconds=0.25,
+        engine=engine,
+        detector_factory=FakeDetector,
+    )
+
+    assert report["reference_global_final"]["text"] == f"final-{3 * AUDIO_SAMPLE_RATE}"
+    assert [item["pause_ms"] for item in report["strategies"]] == [500, 700]
+    for strategy in report["strategies"]:
+        assert strategy["boundaries_samples"] == [int(1.5 * AUDIO_SAMPLE_RATE)]
+        assert len(strategy["portion_finalizations"]) == 1
+        assert strategy["terminal_final"]["mode"] == "remainder"
+        assert strategy["terminal_text"] == (
+            f"final-{int(1.5 * AUDIO_SAMPLE_RATE)} "
+            f"final-{int(1.5 * AUDIO_SAMPLE_RATE)}"
+        )
+        assert strategy["final_call_count"] == 2
+
+    assert report["quality_review"]["requires_human_review"] is True
+    assert "corrections_orales" in report["quality_review"]["dimensions"]

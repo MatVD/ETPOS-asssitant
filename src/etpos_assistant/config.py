@@ -112,6 +112,16 @@ class Settings:
     whisper_stream_preview_suspend_seconds: float = float(
         os.getenv("ETPOS_WHISPER_STREAM_PREVIEW_SUSPEND_SECONDS", "10.0")
     )
+    whisper_stream_pause_finalization_enabled: bool = _as_bool(
+        os.getenv("ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED"),
+        False,
+    )
+    whisper_stream_pause_ms: int = int(
+        os.getenv("ETPOS_WHISPER_STREAM_PAUSE_MS", "600")
+    )
+    whisper_stream_min_portion_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_MIN_PORTION_SECONDS", "2.0")
+    )
     whisper_hotwords_path: Path | None = (
         Path(os.environ["ETPOS_WHISPER_HOTWORDS_PATH"]).expanduser()
         if os.getenv("ETPOS_WHISPER_HOTWORDS_PATH")

@@ -82,10 +82,10 @@ Une étape implémentée et testée localement ne vaut pas validation des perfor
 | 0 | Plan et branche dédiée | `docs: plan incremental dictation implementation` | Plan initial |
 | 1 | Moteur commun sur échantillons | `refactor: share Whisper inference for audio samples` | Terminé localement |
 | 2 | Benchmark des profils et simulation | `test: benchmark incremental dictation profiles` | Terminé localement ; benchmark VPS à faire |
-| 3 | Transport PCM authentifié | `feat: add authenticated PCM dictation transport` | À faire |
-| 4 | Ordonnancement borné des aperçus | `feat: schedule bounded dictation previews` | À faire |
-| 5 | Capture et interface incrémentales | `feat: add incremental voice dictation UI` | À faire |
-| 6 | Finalisation aux pauses | `feat: finalize dictation at validated speech pauses` | À faire |
+| 3 | Transport PCM authentifié | `feat: add authenticated PCM dictation transport` | Terminé localement |
+| 4 | Ordonnancement borné des aperçus | `feat: schedule bounded dictation previews` | Terminé localement |
+| 5 | Capture et interface incrémentales | `feat: add incremental voice dictation UI` | Terminé localement ; validation navigateur restante |
+| 6 | Finalisation aux pauses | `feat: finalize dictation at validated speech pauses` | Terminé localement ; activation bloquée avant validation qualité/performance |
 | 7 | Préparation de l'activation et du rollback | `chore: prepare streaming dictation rollout and rollback` | À faire |
 
 Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un commit dans le contenu de ce même commit. Le message ci-dessus identifie chaque jalon.
@@ -381,18 +381,18 @@ Paramètres candidats uniquement : premier calcul vers 1 seconde de parole, dép
 
 ### Travaux
 
-- [ ] Réutiliser Silero derrière un petit adaptateur ; ne pas importer un framework complet de streaming.
-- [ ] Confirmer un silence effectivement reçu après la parole ; la fin temporaire d'un buffer n'est jamais une preuve de pause.
-- [ ] Conserver les positions absolues en échantillons et éviter un retraitement systématique de tout l'historique.
-- [ ] Tester une pause de 500 à 700 ms comme plage initiale, pas comme valeur définitivement validée.
-- [ ] Regrouper les portions trop courtes pour limiter les appels au modèle.
-- [ ] Finaliser les portions fermées avec le profil final pendant que le microphone reste ouvert.
-- [ ] Placer les frontières dans les silences ; ne pas concaténer des fenêtres contenant la même parole.
-- [ ] Garder ensemble les portions dont la frontière est incertaine plutôt que figer une segmentation douteuse.
-- [ ] À l'arrêt, réutiliser les portions réellement finalisées et traiter seulement la partie restante lorsque leur couverture est complète.
-- [ ] Ne pas convertir un aperçu `beam_size=1` en texte final pour améliorer artificiellement une métrique.
-- [ ] Conserver le mode de référence avec finalisation globale et un moyen de désactiver l'optimisation par portions.
-- [ ] Pour la parole continue longue, suspendre les aperçus si nécessaire et finaliser la portion complète ; aucun texte tronqué présenté comme intégral.
+- [x] Réutiliser Silero derrière un petit adaptateur ; ne pas importer un framework complet de streaming.
+- [x] Confirmer un silence effectivement reçu après la parole ; la fin temporaire d'un buffer n'est jamais une preuve de pause.
+- [x] Conserver les positions absolues en échantillons et éviter un retraitement systématique de tout l'historique.
+- [x] Tester une pause de 500 à 700 ms comme plage initiale, pas comme valeur définitivement validée.
+- [x] Regrouper les portions trop courtes pour limiter les appels au modèle.
+- [x] Finaliser les portions fermées avec le profil final pendant que le microphone reste ouvert.
+- [x] Placer les frontières dans les silences ; ne pas concaténer des fenêtres contenant la même parole.
+- [x] Garder ensemble les portions dont la frontière est incertaine plutôt que figer une segmentation douteuse.
+- [x] À l'arrêt, réutiliser les portions réellement finalisées et traiter seulement la partie restante lorsque leur couverture est complète.
+- [x] Ne pas convertir un aperçu `beam_size=1` en texte final pour améliorer artificiellement une métrique.
+- [x] Conserver le mode de référence avec finalisation globale et un moyen de désactiver l'optimisation par portions.
+- [x] Pour la parole continue longue, suspendre les aperçus si nécessaire et finaliser la portion complète ; aucun texte tronqué présenté comme intégral.
 
 ### Validation
 
@@ -402,7 +402,23 @@ Paramètres candidats uniquement : premier calcul vers 1 seconde de parole, dép
 - [ ] Comparaison de la qualité, du délai final et du coût CPU, y compris sans pause.
 - [ ] Rapports distinguant portions finalisées, aperçu et résultat terminal.
 
-**Critère de sortie :** optimisation implémentée et testée. Son activation normale reste conditionnée à une qualité acceptable et à un gain mesuré sur la machine cible ; sinon elle reste désactivée et son échec est consigné.
+**Résultat local du 30 septembre 2026 :**
+
+- Adaptateur `transcription_vad.py` basé sur l'API VAD de `faster-whisper` 1.2.1, sans dépendance de streaming supplémentaire ni accès à l'état ONNX interne.
+- Une fin de buffer n'est jamais considérée comme une pause : une frontière n'est proposée qu'après silence effectivement reçu ou reprise de parole séparée par un silence suffisant.
+- Le VAD travaille sur une fenêtre roulante bornée et restitue des positions absolues en échantillons. Les portions finales sont contiguës, non chevauchantes et utilisent exclusivement le profil `FINAL`.
+- L'ordonnanceur existant conserve une seule tâche d'inférence suivie ; une frontière finale en attente prend la priorité sur les nouveaux aperçus.
+- Les portions trop courtes sont regroupées via `ETPOS_WHISPER_STREAM_MIN_PORTION_SECONDS`, 2,0 s par défaut. Le seuil runtime expérimental est 600 ms.
+- `ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED` vaut `false` par défaut. Aucun changement de `.env.example` n'est inclus dans cette étape.
+- À l'arrêt, seules les portions effectivement finalisées et contiguës sont réutilisées. Le reste est traité avec `FINAL`; toute incohérence ou erreur de portion provoque un fallback vers la finalisation globale.
+- `whisper-benchmark --incremental --pause-finalization` prépare la comparaison A/B sur les mêmes audios et les seuils 500/600/700 ms. Le rapport sépare référence globale, portions finalisées, résultat terminal, coût cumulé, CPU et temps restant après arrêt ; la revue humaine reste explicitement requise pour mots, termes ETPOS, nombres, négations, corrections, omissions et répétitions.
+- `.venv/bin/pytest -q tests/test_transcription_stream.py tests/test_transcription_vad.py tests/test_transcription_evaluation.py` : 43 tests réussis.
+- `.venv/bin/pytest -q` : 184 tests réussis.
+- La validation A/B sur de vrais audios et les mesures sur le VPS cible n'ont pas été exécutées. Les cinq cases de validation ci-dessus restent donc ouvertes et l'optimisation reste désactivée par défaut.
+
+**Critère de sortie local :** implémentation, fallback et outillage A/B terminés et testés sans activer normalement l'optimisation.
+
+**Critère d'activation restant :** une qualité acceptable et un gain mesuré sur la machine cible sont obligatoires ; sinon l'optimisation doit rester désactivée et l'échec être consigné.
 
 **Commit :** `feat: finalize dictation at validated speech pauses`.
 

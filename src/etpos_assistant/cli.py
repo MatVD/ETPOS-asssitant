@@ -65,6 +65,7 @@ from .transcription import (
 )
 from .transcription_evaluation import (
     DEFAULT_BLOCK_SECONDS,
+    DEFAULT_PAUSE_MS_VALUES,
     DEFAULT_WINDOW_SECONDS,
     parse_seconds_csv,
     run_incremental_benchmark,
@@ -784,6 +785,9 @@ def cmd_whisper_benchmark(args) -> None:
             or args.simulate_stop_at is not None
             or args.report is not None
             or args.block_ms != DEFAULT_BLOCK_SECONDS * 1000
+            or args.pause_finalization
+            or args.pause_ms is not None
+            or args.min_portion_seconds != 2.0
         )
         if incremental_options:
             raise SystemExit(
@@ -815,6 +819,21 @@ def cmd_whisper_benchmark(args) -> None:
                 )
             if args.block_ms <= 0:
                 raise ValueError("--block-ms doit être strictement positif.")
+            if args.min_portion_seconds <= 0:
+                raise ValueError("--min-portion-seconds doit être strictement positif.")
+
+            pause_ms_values = None
+            if args.pause_finalization:
+                raw_pause_ms = args.pause_ms or ",".join(
+                    str(value) for value in DEFAULT_PAUSE_MS_VALUES
+                )
+                pause_ms_values = tuple(
+                    int(value.strip())
+                    for value in raw_pause_ms.split(",")
+                    if value.strip()
+                )
+                if not pause_ms_values or any(value <= 0 for value in pause_ms_values):
+                    raise ValueError("--pause-ms doit contenir des entiers positifs.")
 
             report = run_incremental_benchmark(
                 path,
@@ -823,6 +842,8 @@ def cmd_whisper_benchmark(args) -> None:
                 preview_request_times_seconds=preview_times,
                 simulation_stop_at_seconds=args.simulate_stop_at,
                 block_seconds=args.block_ms / 1000,
+                pause_ms_values=pause_ms_values,
+                min_portion_seconds=args.min_portion_seconds,
                 project_root=Path.cwd(),
             )
         except (
@@ -1019,6 +1040,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_BLOCK_SECONDS * 1000,
         help="Taille conceptuelle des blocs audio de la simulation",
+    )
+    p.add_argument(
+        "--pause-finalization",
+        action="store_true",
+        help="Comparer la finalisation globale aux portions fermées par des pauses Silero",
+    )
+    p.add_argument(
+        "--pause-ms",
+        help="Seuils de pause à comparer en millisecondes ; défaut 500,600,700",
+    )
+    p.add_argument(
+        "--min-portion-seconds",
+        type=float,
+        default=2.0,
+        help="Durée minimale regroupée avant de finaliser une portion",
     )
     p.add_argument(
         "--report",
