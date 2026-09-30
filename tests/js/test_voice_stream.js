@@ -261,6 +261,7 @@ async function testStateMachineAndResidualFlush() {
   const socket = new FakeSocket("ready");
   const states = [];
   const partials = [];
+  const levels = [];
   const finals = [];
   const errors = [];
   const audio = makeAudioEnvironment({
@@ -289,6 +290,7 @@ async function testStateMachineAndResidualFlush() {
     location: { protocol: "https:", host: "example.test" },
     onState: (state) => states.push(state),
     onPartial: (partial) => partials.push(partial),
+    onLevel: (level) => levels.push(level),
     onFinal: (text) => finals.push(text),
     onError: (error) => errors.push(error),
   });
@@ -299,6 +301,14 @@ async function testStateMachineAndResidualFlush() {
   assert.equal(audio.created.context.sampleRate, 16000);
   assert.equal(audio.created.node.options.numberOfOutputs, 0);
   assert.equal(audio.created.source.connectedTo, audio.created.node);
+
+  audio.created.node.port.onmessage({
+    data: { type: "level", value: 0.25 },
+  });
+  audio.created.node.port.onmessage({
+    data: { type: "level", value: 3 },
+  });
+  assert.deepEqual(levels, [0.25, 1]);
 
   const first = new Int16Array([10, 20]);
   audio.created.node.port.onmessage({

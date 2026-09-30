@@ -32,9 +32,10 @@
     constructor(options = {}) {
       this.csrfToken = String(options.csrfToken || "");
       this.websocketPath = options.websocketPath || "/api/transcribe/stream";
-      this.workletUrl = options.workletUrl || "/static/js/voice-worklet.js";
+      this.workletUrl = options.workletUrl || "/static/js/voice-worklet.js?v=2";
       this.onState = options.onState || (() => {});
       this.onPartial = options.onPartial || (() => {});
+      this.onLevel = options.onLevel || (() => {});
       this.onFinal = options.onFinal || (() => {});
       this.onError = options.onError || (() => {});
       this.websocketFactory = options.websocketFactory || ((url) => new WebSocket(url));
@@ -252,6 +253,13 @@
         if (resolve) {
           this.flushWaiters.delete(message.requestId);
           resolve();
+        }
+        return;
+      }
+      if (message.type === "level") {
+        if (this.state === "recording") {
+          const value = Number(message.value || 0);
+          this.onLevel(Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)));
         }
         return;
       }

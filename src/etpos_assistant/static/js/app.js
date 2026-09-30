@@ -5,9 +5,19 @@
   const stop = document.getElementById("stop-button");
   const dictation = document.getElementById("dictation-button");
   const composerStatus = document.getElementById("composer-status");
-  const dictationPreview = document.getElementById("dictation-preview");
-  const dictationPreviewText = document.getElementById("dictation-preview-text");
-  const dictationInsertButton = document.getElementById("dictation-insert-button");
+  const dictationSignal = document.getElementById("dictation-signal");
+  if (dictationSignal && dictationSignal.children.length === 0) {
+    const fragment = document.createDocumentFragment();
+    for (let index = 0; index < 120; index += 1) {
+      const bar = document.createElement("span");
+      bar.className = "dictation-signal-bar";
+      fragment.appendChild(bar);
+    }
+    dictationSignal.appendChild(fragment);
+  }
+  const dictationSignalBars = dictationSignal
+    ? Array.from(dictationSignal.querySelectorAll(".dictation-signal-bar"))
+    : [];
   const messages = document.getElementById("messages");
   const main = document.querySelector(".chat-main");
   const shell = document.getElementById("app-shell");
@@ -29,8 +39,8 @@
   let dictationBusy = false;
   let dictationState = "idle";
   let dictationSnapshot = null;
-  let pendingDictationInsert = "";
   let dictationStopTimer = null;
+  let dictationLevels = Array(Math.max(1, dictationSignalBars.length)).fill(0);
   let sidebarPreviousFocus = null;
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const voiceStreamingEnabled = main?.dataset.voiceStreamingEnabled === "true";
@@ -236,6 +246,30 @@
     composerStatus.classList.toggle("error", Boolean(isError));
   };
 
+  const resetDictationSignal = () => {
+    dictationLevels = Array(Math.max(1, dictationSignalBars.length)).fill(0);
+    dictationSignalBars.forEach((bar) => {
+      bar.style.transform = "scaleY(.1)";
+    });
+  };
+
+  const setDictationWaveVisible = (visible) => {
+    if (dictationSignal) dictationSignal.hidden = !visible;
+    form.classList.toggle("dictation-wave-active", Boolean(visible));
+    if (!visible) resetDictationSignal();
+  };
+
+  const updateDictationSignal = (level) => {
+    if (!dictationSignal || dictationSignal.hidden || dictationSignalBars.length === 0) return;
+    const numeric = Math.max(0, Math.min(1, Number(level) || 0));
+    const visual = Math.min(1, Math.sqrt(numeric) * 2.2);
+    dictationLevels.shift();
+    dictationLevels.push(visual);
+    dictationSignalBars.forEach((bar, index) => {
+      bar.style.transform = "scaleY(" + Math.max(.1, dictationLevels[index] || 0).toFixed(3) + ")";
+    });
+  };
+
   const supportedRecorderMimeType = () => {
     if (typeof MediaRecorder === "undefined") return "";
     const candidates = [
@@ -281,37 +315,38 @@
     setRetryDisabled(active || Boolean(activeGeneration));
   };
 
-  const insertTranscription = (text, selection = null) => {
+  const composeTranscriptionValue = (baseValue, text, selection) => {
     const transcript = String(text || "").trim();
-    if (!transcript) return;
-    const start = selection?.start ?? input.selectionStart ?? input.value.length;
-    const end = selection?.end ?? input.selectionEnd ?? start;
-    const before = input.value.slice(0, start);
-    const after = input.value.slice(end);
+    if (!transcript) return null;
+    const start = selection?.start ?? baseValue.length;
+    const end = selection?.end ?? start;
+    const before = baseValue.slice(0, start);
+    const after = baseValue.slice(end);
     const needsSpaceBefore = before && !/\s$/.test(before);
     const needsSpaceAfter = after && !/^\s/.test(after);
     const inserted = (needsSpaceBefore ? " " : "") + transcript + (needsSpaceAfter ? " " : "");
-    const nextValue = (before + inserted + after).slice(0, input.maxLength || 4000);
-    input.value = nextValue;
-    const caret = Math.min(before.length + inserted.length, nextValue.length);
-    input.setSelectionRange(caret, caret);
+    const value = (before + inserted + after).slice(0, input.maxLength || 4000);
+    return {
+      value,
+      caret: Math.min(before.length + inserted.length, value.length),
+    };
+  };
+
+  const applyComposedTranscription = (composed) => {
+    if (!composed) return;
+    input.value = composed.value;
+    input.setSelectionRange(composed.caret, composed.caret);
     resize();
     input.focus({ preventScroll: true });
     input.dispatchEvent(new Event("input", { bubbles: true }));
   };
 
-  const clearDictationPreview = () => {
-    pendingDictationInsert = "";
-    if (dictationPreviewText) dictationPreviewText.textContent = "";
-    if (dictationInsertButton) dictationInsertButton.hidden = true;
-    if (dictationPreview) dictationPreview.hidden = true;
-  };
-
-  const showDictationPreview = (text, { allowInsert = false } = {}) => {
-    if (!dictationPreview || !dictationPreviewText) return;
-    dictationPreviewText.textContent = String(text || "");
-    dictationPreview.hidden = false;
-    if (dictationInsertButton) dictationInsertButton.hidden = !allowInsert;
+  const insertTranscription = (text, selection = null) => {
+    const start = selection?.start ?? input.selectionStart ?? input.value.length;
+    const end = selection?.end ?? input.selectionEnd ?? start;
+    applyComposedTranscription(
+      composeTranscriptionValue(input.value, text, { start, end }),
+    );
   };
 
   const captureDictationSnapshot = () => ({
@@ -369,7 +404,6 @@
     }
 
     dictationSnapshot = captureDictationSnapshot();
-    clearDictationPreview();
     setDictationState("starting");
     setComposerStatus("");
     let stream = null;
@@ -443,6 +477,7 @@
     activeVoiceStream = null;
     const snapshot = dictationSnapshot;
     dictationSnapshot = null;
+    setDictationWaveVisible(false);
     setDictationState("idle");
 
     const decision = window.finalInsertionDecision?.(snapshot, input.value, text)
@@ -453,17 +488,14 @@
       };
     if (decision.mode === "insert") {
       insertTranscription(decision.text, decision.selection);
-      clearDictationPreview();
       setComposerStatus("");
       announce("Transcription ajoutée au champ de question.");
       return;
     }
 
-    pendingDictationInsert = decision.mode === "review" ? decision.text : "";
-    showDictationPreview(pendingDictationInsert, { allowInsert: Boolean(pendingDictationInsert) });
     setComposerStatus(
-      pendingDictationInsert
-        ? "Le texte a été modifié pendant la dictée. Vérifiez puis insérez la transcription."
+      decision.mode === "review" && decision.text
+        ? "Le champ a été modifié pendant la dictée. La transcription finale n’a pas été appliquée."
         : "",
     );
   };
@@ -471,7 +503,6 @@
   async function startStreamingDictation() {
     if (!dictation || activeGeneration || dictationState !== "idle") return;
     dictationSnapshot = captureDictationSnapshot();
-    clearDictationPreview();
     setComposerStatus("");
 
     const controller = new window.ETPOSVoiceStream({
@@ -479,6 +510,7 @@
       onState(state) {
         if (activeVoiceStream !== controller) return;
         setDictationState(state);
+        setDictationWaveVisible(["starting", "recording", "finishing"].includes(state));
         if (state === "starting") setComposerStatus("Connexion de la dictée…");
         if (state === "recording") {
           setComposerStatus("Écoute en cours…");
@@ -486,9 +518,9 @@
         }
         if (state === "finishing") setComposerStatus("Finalisation de la transcription…");
       },
-      onPartial(update) {
+      onLevel(level) {
         if (activeVoiceStream !== controller || dictationState !== "recording") return;
-        showDictationPreview(update.text || "");
+        updateDictationSignal(level);
       },
       onFinal(text) {
         handleStreamingFinal(text, controller);
@@ -497,7 +529,7 @@
         if (activeVoiceStream !== controller) return;
         activeVoiceStream = null;
         dictationSnapshot = null;
-        clearDictationPreview();
+        setDictationWaveVisible(false);
         setDictationState("idle");
         const message = error?.message || "La dictée n’a pas abouti.";
         setComposerStatus(message, true);
@@ -534,14 +566,6 @@
       setComposerStatus("Préparation de la transcription…");
     }
   }
-
-  dictationInsertButton?.addEventListener("click", () => {
-    if (!pendingDictationInsert) return;
-    insertTranscription(pendingDictationInsert);
-    clearDictationPreview();
-    setComposerStatus("");
-    announce("Transcription ajoutée au champ de question.");
-  });
 
   if (dictation) {
     const classicSupported = window.isSecureContext

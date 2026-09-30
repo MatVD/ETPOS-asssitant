@@ -113,7 +113,10 @@
 
     <form id="chat-form" class="composer">
       <label for="message-input" class="sr-only">Question</label>
-      <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" aria-describedby="composer-note composer-status" required></textarea>
+      <div class="composer-input-shell">
+        <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" aria-describedby="composer-note composer-status" required></textarea>
+        <div class="dictation-wave" id="dictation-signal" hidden aria-hidden="true"></div>
+      </div>
       <div class="composer-actions">
         <button id="dictation-button" type="button" class="composer-icon-button dictation-button" aria-label="Dicter une question" aria-pressed="false">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -130,11 +133,6 @@
             <rect x="7" y="7" width="10" height="10" rx="1.5"/>
           </svg>
         </button>
-      </div>
-      <div class="dictation-preview" id="dictation-preview" hidden>
-        <span class="dictation-preview-label">Aperçu de la dictée</span>
-        <span class="dictation-preview-text" id="dictation-preview-text"></span>
-        <button type="button" class="text-button dictation-insert-button" id="dictation-insert-button" hidden>Insérer la transcription</button>
       </div>
       <p class="composer-note" id="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
       <p class="composer-status" id="composer-status" aria-live="polite"></p>

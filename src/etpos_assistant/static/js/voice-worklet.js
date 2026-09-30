@@ -6,6 +6,9 @@ class ETPOSVoiceCaptureProcessor extends AudioWorkletProcessor {
     this.buffer = new Int16Array(this.chunkSamples);
     this.offset = 0;
     this.accepting = true;
+    this.levelSumSquares = 0;
+    this.levelSampleCount = 0;
+    this.levelWindowSamples = 800;
 
     this.port.onmessage = (event) => {
       const message = event?.data || {};
@@ -46,19 +49,34 @@ class ETPOSVoiceCaptureProcessor extends AudioWorkletProcessor {
     }
   }
 
+  emitLevel() {
+    if (this.levelSampleCount <= 0) return;
+    const rms = Math.sqrt(this.levelSumSquares / this.levelSampleCount);
+    this.port.postMessage({
+      type: "level",
+      value: Math.max(0, Math.min(1, rms)),
+    });
+    this.levelSumSquares = 0;
+    this.levelSampleCount = 0;
+  }
+
   process(inputs) {
     if (!this.accepting) return true;
     const input = inputs?.[0]?.[0];
     if (!input) return true;
 
     for (let index = 0; index < input.length; index += 1) {
-      this.buffer[this.offset] = this.encodeSample(input[index]);
+      const sample = Math.max(-1, Math.min(1, Number(input[index]) || 0));
+      this.levelSumSquares += sample * sample;
+      this.levelSampleCount += 1;
+      this.buffer[this.offset] = this.encodeSample(sample);
       this.offset += 1;
       if (this.offset === this.buffer.length) {
         this.emit(this.offset);
         this.offset = 0;
       }
     }
+    if (this.levelSampleCount >= this.levelWindowSamples) this.emitLevel();
     return true;
   }
 }
