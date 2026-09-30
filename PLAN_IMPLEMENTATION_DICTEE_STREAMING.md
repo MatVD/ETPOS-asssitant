@@ -308,6 +308,8 @@ Paramètres candidats uniquement : premier calcul vers 1 seconde de parole, dép
 
 ## 9. Étape 5 — Intégrer AudioWorklet et l'interface
 
+**Statut :** terminé localement ; validation navigateurs réels et mesures de latence encore requises.
+
 **Objectif :** rendre le chemin incrémental utilisable sans réécrire le frontend ni modifier le chat.
 
 **Fichiers concernés :**
@@ -319,34 +321,55 @@ Paramètres candidats uniquement : premier calcul vers 1 seconde de parole, dép
 
 ### Travaux
 
-- [ ] Demander un `AudioContext` à 16 kHz, vérifier sa fréquence et recueillir les échantillons via AudioWorklet.
-- [ ] Produire du PCM mono signé 16 bits little-endian ; ne pas renvoyer le micro vers les haut-parleurs.
-- [ ] Utiliser le rééchantillonnage fourni par Web Audio ; ne pas développer de rééchantillonneur maison en V1.
-- [ ] Choisir le mode classique avant capture si le chemin incrémental est désactivé ou incompatible.
-- [ ] Ne pas faire tourner systématiquement MediaRecorder en parallèle du worklet.
-- [ ] Implémenter `idle -> starting -> recording -> finishing -> idle`, avec chemins d'erreur et d'annulation.
-- [ ] Poser `starting` avant les opérations asynchrones pour empêcher les doubles clics et démarrages concurrents.
-- [ ] Transmettre les limites depuis le serveur plutôt que conserver une durée frontend indépendante.
-- [ ] Désactiver l'envoi et le retry du chat pendant la dictée, y compris pendant `starting` et `finishing`.
-- [ ] Garder le bouton d'arrêt Codex dédié à la génération existante.
-- [ ] Afficher l'aperçu dans une zone dédiée, via du texte brut ; remplacer chaque révision.
-- [ ] Appeler `insertTranscription()` une seule fois au résultat final ; aucun envoi automatique au chat.
-- [ ] Mémoriser texte et sélection au départ ; si la saisie a changé, proposer une insertion explicite plutôt qu'un écrasement silencieux.
-- [ ] Vider le bloc résiduel du worklet et attendre son accusé de vidage avant l'envoi de `finish`.
-- [ ] Borner les buffers côté worklet et contrôleur et surveiller `WebSocket.bufferedAmount` ; aucune perte silencieuse de blocs.
-- [ ] Libérer pistes micro, contexte audio, connexion et timers à la fin ou à l'abandon.
-- [ ] Ne pas lancer un repli automatique en cas de refus d'authentification, de service occupé ou de coupure en cours de dictée.
-- [ ] Préserver navigation clavier, messages accessibles et absence de notifications vocales excessives à chaque aperçu.
+- [x] Demander un `AudioContext` à 16 kHz, vérifier sa fréquence et recueillir les échantillons via AudioWorklet.
+- [x] Produire du PCM mono signé 16 bits little-endian ; ne pas renvoyer le micro vers les haut-parleurs.
+- [x] Utiliser le rééchantillonnage fourni par Web Audio ; ne pas développer de rééchantillonneur maison en V1.
+- [x] Choisir le mode classique avant capture si le chemin incrémental est désactivé ou incompatible.
+- [x] Ne pas faire tourner systématiquement MediaRecorder en parallèle du worklet.
+- [x] Implémenter `idle -> starting -> recording -> finishing -> idle`, avec chemins d'erreur et d'annulation.
+- [x] Poser `starting` avant les opérations asynchrones pour empêcher les doubles clics et démarrages concurrents.
+- [x] Transmettre les limites depuis le serveur plutôt que conserver une durée frontend indépendante.
+- [x] Désactiver l'envoi et le retry du chat pendant la dictée, y compris pendant `starting` et `finishing`.
+- [x] Garder le bouton d'arrêt Codex dédié à la génération existante.
+- [x] Afficher l'aperçu dans une zone dédiée, via du texte brut ; remplacer chaque révision.
+- [x] Appeler `insertTranscription()` une seule fois au résultat final ; aucun envoi automatique au chat.
+- [x] Mémoriser texte et sélection au départ ; si la saisie a changé, proposer une insertion explicite plutôt qu'un écrasement silencieux.
+- [x] Vider le bloc résiduel du worklet et attendre son accusé de vidage avant l'envoi de `finish`.
+- [x] Borner les buffers côté worklet et contrôleur et surveiller `WebSocket.bufferedAmount` ; aucune perte silencieuse de blocs.
+- [x] Libérer pistes micro, contexte audio, connexion et timers à la fin ou à l'abandon.
+- [x] Ne pas lancer un repli automatique en cas de refus d'authentification, de service occupé ou de coupure en cours de dictée.
+- [x] Préserver navigation clavier, messages accessibles et absence de notifications vocales excessives à chaque aperçu.
 
 ### Validation
 
-- [ ] Tests des états, doubles clics, réponses tardives, refus micro, interruption et modification manuelle du texte.
-- [ ] Vérification du dernier échantillon transmis avant `finish`.
-- [ ] Contrôle syntaxique JavaScript, puis tests de comportement ; le premier ne remplace pas les seconds.
+- [x] Tests des états, doubles clics, réponses tardives, refus micro, interruption/backpressure et modification manuelle du texte.
+- [x] Vérification du dernier échantillon transmis avant `finish`.
+- [x] Contrôle syntaxique JavaScript, puis tests de comportement ; le premier ne remplace pas les seconds.
 - [ ] Essai réel sur Brave/Chromium, puis Safari et Firefox, avec vérification du repli classique.
 - [ ] Mesures navigateur du premier texte et du délai après arrêt.
 
-**Critère de sortie :** dictée incrémentale expérimentale de bout en bout, sans régression du compositeur ni du chat.
+**Résultats locaux :**
+- Nouveau `voice-worklet.js` : capture mono, conversion float32 vers PCM signé 16 bits little-endian et bloc résiduel vidé avec accusé `flushed`.
+- Nouveau `voice-stream.js` : WebSocket validé avant demande micro, état borné `idle/starting/recording/finishing`, limites issues de `ready`, framing séquence/position, backpressure explicite et nettoyage complet.
+- Le contrôleur demande `AudioContext({sampleRate: 16000})`, vérifie la fréquence réellement obtenue et utilise un `AudioWorkletNode` sans sortie audio.
+- Le feature flag serveur est transmis au template ; si le streaming est désactivé ou incompatible avant capture, le MediaRecorder classique est conservé comme repli.
+- Aucun repli automatique n'est lancé après un refus WebSocket, un service occupé, un refus micro, une coupure ou une erreur de backpressure.
+- Les `partial` remplacent une zone d'aperçu en texte brut et ne sont jamais injectés dans la question.
+- Le résultat `final` est inséré une seule fois si la saisie n'a pas changé ; sinon l'utilisateur obtient un bouton explicite « Insérer la transcription ».
+- Envoi et retry du chat sont désactivés pendant la dictée ; le bouton d'arrêt Codex reste réservé à la génération.
+- Les limites `max_samples`, taille/message, file et délai de finalisation viennent du serveur. Le contrôleur arrête proprement à la limite d'échantillons sans timer de durée indépendant.
+- `node --check` : `app.js`, `voice-stream.js` et `voice-worklet.js` valides.
+- `node tests/js/test_voice_stream.js` : tests comportementaux réussis, incluant double démarrage, refus serveur avant micro, refus micro, dernier bloc résiduel, réponse tardive, arrêt vide, limite serveur, backpressure et modification manuelle.
+- Compilation Jinja de `base.html` et `chat.html` : réussie.
+- `.venv/bin/pytest -q tests/test_chat_ux.py` : 6 tests réussis.
+- `.venv/bin/pytest -q tests/test_transcription_stream.py` : 24 tests réussis.
+- `.venv/bin/pytest -q` : 175 tests réussis.
+- `git diff --check` sur les fichiers de l'étape : aucune erreur.
+- Une session Brave locale existe, mais l'accès à `127.0.0.1:8787` est intercepté en 403 avant réponse FastAPI identifiable. L'onglet VPS existant `agent.matblock.com` n'a pas été utilisé. Aucun accès VPS n'a été effectué.
+
+**Critère de sortie local :** intégration incrémentale implémentée et testée sans régression automatisée du compositeur ni du chat.
+
+**Validation restante :** essai réel sur Brave/Chromium, Safari et Firefox puis mesures du premier texte et du délai après arrêt sur une instance contrôlable.
 
 **Commit :** `feat: add incremental voice dictation UI`.
 
@@ -462,6 +485,7 @@ Pour reprendre : lire ce document, inspecter `git status`, vérifier la branche 
 | 2026-09-29 | 2 | Outillage local de comparaison `final` / `preview` et simulateur déterministe ajoutés. 10 tests ciblés, 22 tests transcription et 149 tests complets réussis ; `git diff --check` OK. Aucun benchmark Whisper réel ni accès VPS effectué ; les mesures de la machine cible restent ouvertes. |
 | 2026-09-29 | 3 | Transport PCM WebSocket sécurisé ajouté derrière feature flag désactivé : origine/session/CSRF, séquences et couverture, limites mémoire/temps, admission commune POST/WebSocket et finalisation globale. Uvicorn limite les messages à 16 Kio et la file à 4. 169 tests complets réussis localement ; aucun accès VPS ni activation du streaming. |
 | 2026-09-30 | 4 | Ordonnanceur borné d'aperçus ajouté : une inférence active, une demande remplaçable, réception audio concurrente, résultats obsolètes ignorés, `partial` révisé et finalisation globale prioritaire. 24 tests streaming et 175 tests complets réussis ; aucun benchmark Whisper réel ni accès VPS. La cadence 1,0 / 2,5 / 10,0 s reste provisoire. |
+| 2026-09-30 | 5 | AudioWorklet et contrôleur WebSocket intégrés au compositeur avec repli MediaRecorder décidé avant capture, aperçu remplaçable, flush résiduel, backpressure, insertion finale protégée contre les modifications utilisateur et limites fournies par le serveur. Tests JS comportementaux, 24 tests streaming et 175 tests complets réussis. Validation navigateurs réels et mesures de latence encore ouvertes ; aucun accès VPS. |
 
 ## 14. Références techniques du cadrage
 

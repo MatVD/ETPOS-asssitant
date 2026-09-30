@@ -5,6 +5,9 @@
   const stop = document.getElementById("stop-button");
   const dictation = document.getElementById("dictation-button");
   const composerStatus = document.getElementById("composer-status");
+  const dictationPreview = document.getElementById("dictation-preview");
+  const dictationPreviewText = document.getElementById("dictation-preview-text");
+  const dictationInsertButton = document.getElementById("dictation-insert-button");
   const messages = document.getElementById("messages");
   const main = document.querySelector(".chat-main");
   const shell = document.getElementById("app-shell");
@@ -22,10 +25,15 @@
     : [];
   let activeGeneration = null;
   let activeRecorder = null;
+  let activeVoiceStream = null;
   let dictationBusy = false;
+  let dictationState = "idle";
+  let dictationSnapshot = null;
+  let pendingDictationInsert = "";
   let dictationStopTimer = null;
   let sidebarPreviousFocus = null;
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const voiceStreamingEnabled = main?.dataset.voiceStreamingEnabled === "true";
 
   const announce = (message) => {
     if (!announcer) return;
@@ -240,26 +248,44 @@
     return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
   };
 
-  const setDictationState = (state) => {
-    if (!dictation) return;
-    const recording = state === "recording";
-    const transcribing = state === "transcribing";
-    dictation.classList.toggle("recording", recording);
-    dictation.classList.toggle("transcribing", transcribing);
-    dictation.setAttribute("aria-pressed", recording ? "true" : "false");
-    dictation.setAttribute(
-      "aria-label",
-      recording ? "Arrêter la dictée" : transcribing ? "Transcription en cours" : "Dicter une question",
-    );
-    dictation.disabled = transcribing || Boolean(activeGeneration);
-    send.disabled = recording || transcribing || Boolean(activeGeneration);
+  const setRetryDisabled = (disabled) => {
+    document.querySelectorAll(".retry-button").forEach((button) => {
+      button.disabled = Boolean(disabled);
+    });
   };
 
-  const insertTranscription = (text) => {
+  const setDictationState = (state) => {
+    dictationState = state;
+    const recording = state === "recording";
+    const starting = state === "starting";
+    const finishing = state === "finishing";
+    const transcribing = state === "transcribing";
+    const active = state !== "idle";
+    if (dictation) {
+      dictation.classList.toggle("recording", recording);
+      dictation.classList.toggle("transcribing", starting || finishing || transcribing);
+      dictation.setAttribute("aria-pressed", recording ? "true" : "false");
+      dictation.setAttribute(
+        "aria-label",
+        recording
+          ? "Arrêter la dictée"
+          : starting
+            ? "Démarrage de la dictée"
+            : finishing || transcribing
+              ? "Transcription en cours"
+              : "Dicter une question",
+      );
+      dictation.disabled = starting || finishing || transcribing || Boolean(activeGeneration);
+    }
+    send.disabled = active || Boolean(activeGeneration);
+    setRetryDisabled(active || Boolean(activeGeneration));
+  };
+
+  const insertTranscription = (text, selection = null) => {
     const transcript = String(text || "").trim();
     if (!transcript) return;
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? start;
+    const start = selection?.start ?? input.selectionStart ?? input.value.length;
+    const end = selection?.end ?? input.selectionEnd ?? start;
     const before = input.value.slice(0, start);
     const after = input.value.slice(end);
     const needsSpaceBefore = before && !/\s$/.test(before);
@@ -273,6 +299,26 @@
     input.focus({ preventScroll: true });
     input.dispatchEvent(new Event("input", { bubbles: true }));
   };
+
+  const clearDictationPreview = () => {
+    pendingDictationInsert = "";
+    if (dictationPreviewText) dictationPreviewText.textContent = "";
+    if (dictationInsertButton) dictationInsertButton.hidden = true;
+    if (dictationPreview) dictationPreview.hidden = true;
+  };
+
+  const showDictationPreview = (text, { allowInsert = false } = {}) => {
+    if (!dictationPreview || !dictationPreviewText) return;
+    dictationPreviewText.textContent = String(text || "");
+    dictationPreview.hidden = false;
+    if (dictationInsertButton) dictationInsertButton.hidden = !allowInsert;
+  };
+
+  const captureDictationSnapshot = () => ({
+    value: input.value,
+    start: input.selectionStart ?? input.value.length,
+    end: input.selectionEnd ?? input.selectionStart ?? input.value.length,
+  });
 
   const stopRecorderTracks = (recorderState) => {
     recorderState?.stream?.getTracks?.().forEach((track) => track.stop());
@@ -310,17 +356,21 @@
       announce(message);
     } finally {
       dictationBusy = false;
+      dictationSnapshot = null;
       setDictationState("idle");
     }
   }
 
-  async function startDictation() {
-    if (!dictation || dictationBusy || activeGeneration) return;
+  async function startClassicDictation() {
+    if (!dictation || dictationBusy || activeGeneration || dictationState !== "idle") return;
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setComposerStatus("La dictée n’est pas disponible dans ce navigateur ou hors HTTPS.", true);
       return;
     }
 
+    dictationSnapshot = captureDictationSnapshot();
+    clearDictationPreview();
+    setDictationState("starting");
     setComposerStatus("");
     let stream = null;
     try {
@@ -382,12 +432,102 @@
         message = "Aucun microphone n’a été détecté.";
       }
       setDictationState("idle");
+      dictationSnapshot = null;
       setComposerStatus(message, true);
       announce(message);
     }
   }
 
+  const handleStreamingFinal = (text, controller) => {
+    if (activeVoiceStream !== controller) return;
+    activeVoiceStream = null;
+    const snapshot = dictationSnapshot;
+    dictationSnapshot = null;
+    setDictationState("idle");
+
+    const decision = window.finalInsertionDecision?.(snapshot, input.value, text)
+      || {
+        mode: snapshot && input.value === snapshot.value ? "insert" : "review",
+        text: String(text || "").trim(),
+        selection: snapshot ? { start: snapshot.start, end: snapshot.end } : null,
+      };
+    if (decision.mode === "insert") {
+      insertTranscription(decision.text, decision.selection);
+      clearDictationPreview();
+      setComposerStatus("");
+      announce("Transcription ajoutée au champ de question.");
+      return;
+    }
+
+    pendingDictationInsert = decision.mode === "review" ? decision.text : "";
+    showDictationPreview(pendingDictationInsert, { allowInsert: Boolean(pendingDictationInsert) });
+    setComposerStatus(
+      pendingDictationInsert
+        ? "Le texte a été modifié pendant la dictée. Vérifiez puis insérez la transcription."
+        : "",
+    );
+  };
+
+  async function startStreamingDictation() {
+    if (!dictation || activeGeneration || dictationState !== "idle") return;
+    dictationSnapshot = captureDictationSnapshot();
+    clearDictationPreview();
+    setComposerStatus("");
+
+    const controller = new window.ETPOSVoiceStream({
+      csrfToken: csrf,
+      onState(state) {
+        if (activeVoiceStream !== controller) return;
+        setDictationState(state);
+        if (state === "starting") setComposerStatus("Connexion de la dictée…");
+        if (state === "recording") {
+          setComposerStatus("Écoute en cours…");
+          announce("Dictée démarrée.");
+        }
+        if (state === "finishing") setComposerStatus("Finalisation de la transcription…");
+      },
+      onPartial(update) {
+        if (activeVoiceStream !== controller || dictationState !== "recording") return;
+        showDictationPreview(update.text || "");
+      },
+      onFinal(text) {
+        handleStreamingFinal(text, controller);
+      },
+      onError(error) {
+        if (activeVoiceStream !== controller) return;
+        activeVoiceStream = null;
+        dictationSnapshot = null;
+        clearDictationPreview();
+        setDictationState("idle");
+        const message = error?.message || "La dictée n’a pas abouti.";
+        setComposerStatus(message, true);
+        announce(message);
+      },
+    });
+    activeVoiceStream = controller;
+    try {
+      await controller.start();
+    } catch {
+      // Le contrôleur a déjà rendu l'erreur terminale via onError.
+    }
+  }
+
+  async function startDictation() {
+    const streamingSupported = voiceStreamingEnabled
+      && Boolean(window.ETPOSVoiceStream?.supported?.(window));
+    if (streamingSupported) {
+      await startStreamingDictation();
+      return;
+    }
+    await startClassicDictation();
+  }
+
   function stopDictation() {
+    if (activeVoiceStream && dictationState === "recording") {
+      void activeVoiceStream.stop();
+      return;
+    }
+
     const recorder = activeRecorder?.recorder;
     if (recorder?.state === "recording") {
       recorder.stop();
@@ -395,14 +535,28 @@
     }
   }
 
+  dictationInsertButton?.addEventListener("click", () => {
+    if (!pendingDictationInsert) return;
+    insertTranscription(pendingDictationInsert);
+    clearDictationPreview();
+    setComposerStatus("");
+    announce("Transcription ajoutée au champ de question.");
+  });
+
   if (dictation) {
-    const supported = window.isSecureContext
+    const classicSupported = window.isSecureContext
       && Boolean(navigator.mediaDevices?.getUserMedia)
       && typeof MediaRecorder !== "undefined";
+    const streamingSupported = voiceStreamingEnabled
+      && Boolean(window.ETPOSVoiceStream?.supported?.(window));
+    const supported = streamingSupported || classicSupported;
     dictation.hidden = !supported;
     if (supported) {
       dictation.addEventListener("click", () => {
-        if (activeRecorder?.recorder?.state === "recording") {
+        if (
+          (activeVoiceStream && dictationState === "recording")
+          || activeRecorder?.recorder?.state === "recording"
+        ) {
           stopDictation();
         } else {
           void startDictation();
@@ -414,6 +568,7 @@
   window.addEventListener("pagehide", () => {
     if (dictationStopTimer) clearTimeout(dictationStopTimer);
     stopRecorderTracks(activeRecorder);
+    if (activeVoiceStream) void activeVoiceStream.cancel();
   });
 
   const isNearBottom = (threshold = 180) => (
@@ -517,11 +672,12 @@
 
   function setGenerating(active) {
     const stopHadFocus = document.activeElement === stop;
-    send.disabled = active || dictationBusy || Boolean(activeRecorder);
+    send.disabled = active || dictationState !== "idle" || dictationBusy || Boolean(activeRecorder);
     send.hidden = active;
     stop.hidden = !active;
     stop.disabled = !active;
-    if (dictation) dictation.disabled = active || dictationBusy;
+    if (dictation) dictation.disabled = active || dictationBusy || dictationState !== "idle";
+    setRetryDisabled(active || dictationState !== "idle");
     if (active) {
       form.setAttribute("aria-busy", "true");
     } else {
@@ -801,7 +957,7 @@
 
   messages.addEventListener("click", async (event) => {
     const retry = event.target.closest(".retry-button");
-    if (!retry || activeGeneration) return;
+    if (!retry || activeGeneration || dictationState !== "idle") return;
 
     const conversationId = Number(main.dataset.conversationId);
     if (!conversationId) return;
@@ -822,7 +978,7 @@
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if (!text || activeGeneration || dictationBusy || activeRecorder) return;
+    if (!text || activeGeneration || dictationState !== "idle" || dictationBusy || activeRecorder) return;
 
     addMessage("user", text);
     const assistant = addMessage("assistant", "");

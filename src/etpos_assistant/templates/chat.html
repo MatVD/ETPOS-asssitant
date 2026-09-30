@@ -42,7 +42,13 @@
   </aside>
   <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" aria-label="Fermer l’historique" tabindex="-1"></button>
 
-  <main class="chat-main" id="main-content" tabindex="-1" data-conversation-id="{{ conversation_id or '' }}">
+  <main
+    class="chat-main"
+    id="main-content"
+    tabindex="-1"
+    data-conversation-id="{{ conversation_id or '' }}"
+    data-voice-streaming-enabled="{{ 'true' if voice_streaming_enabled else 'false' }}"
+  >
     <header class="chat-header">
       <button type="button" class="mobile-menu-button" id="sidebar-toggle" aria-controls="conversation-sidebar" aria-expanded="false">
         <span aria-hidden="true">☰</span>
@@ -124,6 +130,11 @@
             <rect x="7" y="7" width="10" height="10" rx="1.5"/>
           </svg>
         </button>
+      </div>
+      <div class="dictation-preview" id="dictation-preview" hidden>
+        <span class="dictation-preview-label">Aperçu de la dictée</span>
+        <span class="dictation-preview-text" id="dictation-preview-text"></span>
+        <button type="button" class="text-button dictation-insert-button" id="dictation-insert-button" hidden>Insérer la transcription</button>
       </div>
       <p class="composer-note" id="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
       <p class="composer-status" id="composer-status" aria-live="polite"></p>

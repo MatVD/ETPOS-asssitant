@@ -178,6 +178,8 @@ async def test_stream_transcribes_complete_pcm_with_final_profile(monkeypatch):
 
     assert websocket.sent[0]["type"] == "ready"
     assert websocket.sent[0]["limits"]["nominal_chunk_bytes"] == 8000
+    assert websocket.sent[0]["limits"]["max_queue_messages"] == 4
+    assert websocket.sent[0]["limits"]["finalization_timeout_seconds"] == 2.0
     assert websocket.sent[-1] == {
         "type": "final",
         "dictation_id": websocket.sent[0]["dictation_id"],

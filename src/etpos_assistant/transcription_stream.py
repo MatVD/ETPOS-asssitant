@@ -38,6 +38,7 @@ PCM_BYTES_PER_SAMPLE = 2
 CHUNK_HEADER = struct.Struct("<IQ")
 CHUNK_HEADER_BYTES = CHUNK_HEADER.size
 TRANSPORT_MAX_MESSAGE_BYTES = 16 * 1024
+TRANSPORT_MAX_QUEUE_MESSAGES = 4
 NORMAL_CLOSE_CODE = 1000
 POLICY_CLOSE_CODE = 1008
 TRY_AGAIN_CLOSE_CODE = 1013
@@ -90,6 +91,8 @@ class StreamLimits:
     max_pcm_bytes: int
     max_message_bytes: int
     nominal_chunk_bytes: int
+    max_queue_messages: int = TRANSPORT_MAX_QUEUE_MESSAGES
+    finalization_timeout_seconds: float = 120.0
 
 
 class PCMStreamBuffer:
@@ -210,6 +213,8 @@ def stream_limits() -> StreamLimits:
             TRANSPORT_MAX_MESSAGE_BYTES,
         ),
         nominal_chunk_bytes=settings.whisper_stream_nominal_chunk_bytes,
+        max_queue_messages=TRANSPORT_MAX_QUEUE_MESSAGES,
+        finalization_timeout_seconds=settings.whisper_stream_finalization_timeout_seconds,
     )
 
 
@@ -788,6 +793,8 @@ async def handle_transcription_websocket(websocket: WebSocket) -> None:
                     "max_samples": limits.max_samples,
                     "max_message_bytes": limits.max_message_bytes,
                     "nominal_chunk_bytes": limits.nominal_chunk_bytes,
+                    "max_queue_messages": limits.max_queue_messages,
+                    "finalization_timeout_seconds": limits.finalization_timeout_seconds,
                 },
             }
         )
