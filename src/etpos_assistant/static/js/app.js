@@ -4,7 +4,8 @@
   const send = document.getElementById("send-button");
   const stop = document.getElementById("stop-button");
   const dictation = document.getElementById("dictation-button");
-  const composerStatus = document.getElementById("composer-status");
+  const composerNote = document.getElementById("composer-note");
+  const defaultComposerNote = composerNote?.textContent || "Réponses fondées sur la documentation officielle ETPOS.";
   const dictationSignal = document.getElementById("dictation-signal");
   if (dictationSignal && dictationSignal.children.length === 0) {
     const fragment = document.createDocumentFragment();
@@ -241,9 +242,10 @@
   });
 
   const setComposerStatus = (text = "", isError = false) => {
-    if (!composerStatus) return;
-    composerStatus.textContent = text;
-    composerStatus.classList.toggle("error", Boolean(isError));
+    if (!composerNote) return;
+    const message = String(text || "");
+    composerNote.textContent = message || defaultComposerNote;
+    composerNote.classList.toggle("error", Boolean(message && isError));
   };
 
   const resetDictationSignal = () => {

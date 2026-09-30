@@ -114,7 +114,7 @@
     <form id="chat-form" class="composer">
       <label for="message-input" class="sr-only">Question</label>
       <div class="composer-input-shell">
-        <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" aria-describedby="composer-note composer-status" required></textarea>
+        <textarea id="message-input" name="message" rows="1" maxlength="4000" placeholder="Pose une question sur ETPOS…" aria-describedby="composer-note" required></textarea>
         <div class="dictation-wave" id="dictation-signal" hidden aria-hidden="true"></div>
       </div>
       <div class="composer-actions">
@@ -134,8 +134,7 @@
           </svg>
         </button>
       </div>
-      <p class="composer-note" id="composer-note">Réponses fondées sur la documentation officielle ETPOS.</p>
-      <p class="composer-status" id="composer-status" aria-live="polite"></p>
+      <p class="composer-note" id="composer-note" aria-live="polite">Réponses fondées sur la documentation officielle ETPOS.</p>
     </form>
   </main>
 </div>

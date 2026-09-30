@@ -103,9 +103,8 @@ button { cursor: pointer; touch-action: manipulation; }
 .dictation-wave { position: absolute; inset: .2rem .45rem; display: flex; align-items: center; justify-content: center; gap: .1rem; overflow: hidden; pointer-events: none; }
 .dictation-wave[hidden] { display: none; }
 .dictation-signal-bar { flex: 1 1 0; min-width: .09rem; max-width: .16rem; height: 1.85rem; border-radius: 999px; background: #6f7781; transform: scaleY(.1); transform-origin: center; transition: transform 55ms linear; opacity: .92; }
-.composer-note, .composer-status { grid-column: 1 / -1; margin: 0 .4rem; font-size: .7rem; color: #8a94a3; }
-.composer-status:empty { display: none; }
-.composer-status.error { color: #8a2d22; }
+.composer-note { grid-column: 1 / -1; margin: 0 .4rem; font-size: .7rem; color: #8a94a3; }
+.composer-note.error { color: #8a2d22; }
 .message-actions { display: flex; gap: .5rem; margin-top: .8rem; }
 .retry-button { padding: .48rem .7rem; border: 1px solid #cfd7e1; border-radius: .6rem; background: white; color: #34465e; font-size: .8rem; font-weight: 700; }
 .retry-button:hover { background: #f5f7fa; }
@@ -210,6 +209,6 @@ button { cursor: pointer; touch-action: manipulation; }
   .dictation-signal-bar { background: #b9c8d9; }
   .dictation-button, .stop-button { color: #c8d3df; }
   .dictation-button.recording { background: #2b1b1b; border-color: #70403e; color: #f1a09b; }
-  .composer-status.error { color: #f0a29a; }
+  .composer-note.error { color: #f0a29a; }
   .citation-card strong { color: #d5deea; }
 }
