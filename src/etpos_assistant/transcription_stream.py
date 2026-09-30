@@ -7,6 +7,7 @@ import secrets
 import struct
 import threading
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Callable
 
 from fastapi import WebSocket
@@ -24,6 +25,7 @@ from .transcription import (
     TranscriptionError,
     TranscriptionInputError,
     TranscriptionProfile,
+    TranscriptionResult,
     transcribe_audio_samples,
 )
 
@@ -78,7 +80,7 @@ class DictationAdmission:
 
 
 dictation_admission = DictationAdmission()
-_FINALIZATION_TASKS: set[asyncio.Task[Any]] = set()
+_INFERENCE_TASKS: set[asyncio.Task[Any]] = set()
 
 
 @dataclass(frozen=True)
@@ -304,6 +306,333 @@ def pcm16le_to_float32(pcm: bytes):
     return samples.astype(np.float32) / 32768.0
 
 
+@dataclass(frozen=True)
+class PreviewPolicy:
+    first_samples: int
+    interval_samples: int
+    suspend_samples: int
+
+    @classmethod
+    def from_seconds(
+        cls,
+        *,
+        first_seconds: float,
+        interval_seconds: float,
+        suspend_seconds: float,
+    ) -> "PreviewPolicy":
+        if first_seconds <= 0 or interval_seconds <= 0 or suspend_seconds <= 0:
+            raise ValueError("Les paramètres d'aperçu doivent être strictement positifs.")
+        if suspend_seconds < first_seconds:
+            raise ValueError(
+                "La suspension des aperçus ne peut pas précéder le premier aperçu."
+            )
+        return cls(
+            first_samples=max(1, int(round(first_seconds * AUDIO_SAMPLE_RATE))),
+            interval_samples=max(1, int(round(interval_seconds * AUDIO_SAMPLE_RATE))),
+            suspend_samples=max(1, int(round(suspend_seconds * AUDIO_SAMPLE_RATE))),
+        )
+
+
+def preview_policy() -> PreviewPolicy:
+    return PreviewPolicy.from_seconds(
+        first_seconds=settings.whisper_stream_preview_first_seconds,
+        interval_seconds=settings.whisper_stream_preview_interval_seconds,
+        suspend_seconds=settings.whisper_stream_preview_suspend_seconds,
+    )
+
+
+@dataclass(frozen=True)
+class PreviewRequest:
+    pcm: bytes
+    total_samples: int
+    requested_at: float
+
+
+@dataclass(frozen=True)
+class PreviewOutcome:
+    total_samples: int
+    text: str
+    elapsed_ms: float
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class PartialUpdate:
+    revision: int
+    text: str
+    covered_samples: int
+
+
+@dataclass
+class PreviewMetrics:
+    preview_requests: int = 0
+    preview_started: int = 0
+    preview_replaced: int = 0
+    preview_obsolete_results: int = 0
+    preview_emitted: int = 0
+    preview_empty: int = 0
+    preview_errors: int = 0
+    pending_dropped_on_finish: int = 0
+    pending_dropped_on_suspend: int = 0
+    preview_total_ms: float = 0.0
+    preview_queue_wait_max_ms: float = 0.0
+    final_wait_for_preview_ms: float = 0.0
+    max_audio_lag_seconds: float = 0.0
+    preview_suspended: bool = False
+
+
+class PreviewScheduler:
+    def __init__(
+        self,
+        *,
+        policy: PreviewPolicy,
+        engine: Callable[..., TranscriptionResult] | None = None,
+        converter: Callable[[bytes], Any] | None = None,
+        clock: Callable[[], float] = perf_counter,
+    ) -> None:
+        self.policy = policy
+        self.engine = engine or transcribe_audio_samples
+        self.converter = converter or pcm16le_to_float32
+        self.clock = clock
+        self.metrics = PreviewMetrics()
+        self._active_task: asyncio.Task[PreviewOutcome] | None = None
+        self._active_request: PreviewRequest | None = None
+        self._pending: PreviewRequest | None = None
+        self._last_requested_samples: int | None = None
+        self._revision = 0
+        self._finalizing = False
+        self._completion_event = asyncio.Event()
+
+    @property
+    def has_active_inference(self) -> bool:
+        return self._active_task is not None and not self._active_task.done()
+
+    @property
+    def has_tracked_inference(self) -> bool:
+        return self._active_task is not None
+
+    @property
+    def pending_samples(self) -> int | None:
+        return self._pending.total_samples if self._pending is not None else None
+
+    def consider_snapshot(self, pcm: bytes, *, total_samples: int) -> bool:
+        if self._finalizing or total_samples <= 0:
+            return False
+
+        if total_samples > self.policy.suspend_samples:
+            self.metrics.preview_suspended = True
+            if self._pending is not None:
+                self._pending = None
+                self.metrics.pending_dropped_on_suspend += 1
+            return False
+
+        if self._last_requested_samples is None:
+            if total_samples < self.policy.first_samples:
+                return False
+        elif total_samples - self._last_requested_samples < self.policy.interval_samples:
+            return False
+
+        request = PreviewRequest(
+            pcm=bytes(pcm),
+            total_samples=total_samples,
+            requested_at=self.clock(),
+        )
+        self.metrics.preview_requests += 1
+        self._last_requested_samples = total_samples
+
+        if self._active_task is None:
+            self._start(request)
+        else:
+            if self._pending is not None:
+                self.metrics.preview_replaced += 1
+            self._pending = request
+        return True
+
+    def _start(self, request: PreviewRequest) -> None:
+        if self._finalizing:
+            return
+        self.metrics.preview_started += 1
+        queue_wait_ms = max(0.0, (self.clock() - request.requested_at) * 1000)
+        self.metrics.preview_queue_wait_max_ms = max(
+            self.metrics.preview_queue_wait_max_ms,
+            queue_wait_ms,
+        )
+        task = asyncio.create_task(asyncio.to_thread(self._run_preview, request))
+        _track_inference_task(task)
+        self._active_task = task
+        self._active_request = request
+        self._completion_event.clear()
+        task.add_done_callback(lambda _task: self._completion_event.set())
+
+    def _run_preview(self, request: PreviewRequest) -> PreviewOutcome:
+        started = self.clock()
+        try:
+            samples = self.converter(request.pcm)
+            result = self.engine(samples, profile=TranscriptionProfile.PREVIEW)
+        except TranscriptionError as exc:
+            return PreviewOutcome(
+                total_samples=request.total_samples,
+                text="",
+                elapsed_ms=max(0.0, (self.clock() - started) * 1000),
+                error=str(exc),
+            )
+        return PreviewOutcome(
+            total_samples=request.total_samples,
+            text=result.text,
+            elapsed_ms=max(0.0, (self.clock() - started) * 1000),
+        )
+
+    async def wait_for_completion(self) -> None:
+        await self._completion_event.wait()
+
+    def collect_completed(self, *, current_total_samples: int) -> PartialUpdate | None:
+        task = self._active_task
+        request = self._active_request
+        if task is None or request is None or not task.done():
+            return None
+
+        self._active_task = None
+        self._active_request = None
+        self._completion_event.clear()
+
+        try:
+            outcome = task.result()
+        except Exception as exc:  # la finale doit rester disponible même si un aperçu échoue
+            outcome = PreviewOutcome(
+                total_samples=request.total_samples,
+                text="",
+                elapsed_ms=0.0,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+        self.metrics.preview_total_ms += outcome.elapsed_ms
+        lag_seconds = max(
+            0.0,
+            (current_total_samples - outcome.total_samples) / AUDIO_SAMPLE_RATE,
+        )
+        self.metrics.max_audio_lag_seconds = max(
+            self.metrics.max_audio_lag_seconds,
+            lag_seconds,
+        )
+
+        obsolete = (
+            self._finalizing
+            or (
+                self._pending is not None
+                and self._pending.total_samples > outcome.total_samples
+            )
+            or (
+                self.metrics.preview_suspended
+                and current_total_samples > outcome.total_samples
+            )
+        )
+        update: PartialUpdate | None = None
+        if outcome.error is not None:
+            self.metrics.preview_errors += 1
+            logger.warning(
+                "Aperçu Whisper ignoré covered_samples=%s error=%s",
+                outcome.total_samples,
+                outcome.error,
+            )
+        elif obsolete:
+            self.metrics.preview_obsolete_results += 1
+        else:
+            self._revision += 1
+            self.metrics.preview_emitted += 1
+            if not outcome.text:
+                self.metrics.preview_empty += 1
+            update = PartialUpdate(
+                revision=self._revision,
+                text=outcome.text,
+                covered_samples=outcome.total_samples,
+            )
+
+        pending = self._pending
+        self._pending = None
+        if pending is not None and not self._finalizing:
+            self._start(pending)
+        return update
+
+    def begin_finalization(self) -> None:
+        if self._finalizing:
+            return
+        self._finalizing = True
+        if self._pending is not None:
+            self._pending = None
+            self.metrics.pending_dropped_on_finish += 1
+
+    async def wait_for_active_before_final(
+        self,
+        *,
+        current_total_samples: int,
+        timeout_seconds: float,
+    ) -> None:
+        self.begin_finalization()
+        task = self._active_task
+        if task is None:
+            return
+
+        started = self.clock()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self.metrics.final_wait_for_preview_ms = max(
+                0.0,
+                (self.clock() - started) * 1000,
+            )
+            raise StreamProtocolError(
+                "finalization_timeout",
+                "Un aperçu Whisper en cours n'a pas terminé avant le délai de finalisation.",
+            ) from exc
+
+        self.metrics.final_wait_for_preview_ms = max(
+            0.0,
+            (self.clock() - started) * 1000,
+        )
+        self.collect_completed(current_total_samples=current_total_samples)
+
+    def abandon_and_release_admission(self, admission_token: str) -> None:
+        self.begin_finalization()
+        task = self._active_task
+        if task is None or task.done():
+            dictation_admission.release(admission_token)
+            return
+
+        task.add_done_callback(
+            lambda _task: dictation_admission.release(admission_token)
+        )
+
+    def metrics_snapshot(self, *, final_ms: float | None = None) -> dict[str, Any]:
+        return {
+            "preview_requests": self.metrics.preview_requests,
+            "preview_started": self.metrics.preview_started,
+            "preview_replaced": self.metrics.preview_replaced,
+            "preview_obsolete_results": self.metrics.preview_obsolete_results,
+            "preview_emitted": self.metrics.preview_emitted,
+            "preview_empty": self.metrics.preview_empty,
+            "preview_errors": self.metrics.preview_errors,
+            "pending_dropped_on_finish": self.metrics.pending_dropped_on_finish,
+            "pending_dropped_on_suspend": self.metrics.pending_dropped_on_suspend,
+            "preview_queue_wait_max_ms": round(
+                self.metrics.preview_queue_wait_max_ms,
+                3,
+            ),
+            "final_wait_for_preview_ms": round(
+                self.metrics.final_wait_for_preview_ms,
+                3,
+            ),
+            "max_audio_lag_seconds": round(
+                self.metrics.max_audio_lag_seconds,
+                3,
+            ),
+            "preview_suspended": self.metrics.preview_suspended,
+            "profile_cost_ms": {
+                "preview": round(self.metrics.preview_total_ms, 3),
+                "final": round(final_ms, 3) if final_ms is not None else None,
+            },
+        }
+
+
 async def _receive_message(
     websocket: WebSocket,
     *,
@@ -347,13 +676,14 @@ async def _send_error(
 def _track_inference_task(
     task: asyncio.Task[Any],
     *,
-    admission_token: str,
+    admission_token: str | None = None,
 ) -> None:
-    _FINALIZATION_TASKS.add(task)
+    _INFERENCE_TASKS.add(task)
 
     def done(completed: asyncio.Task[Any]) -> None:
-        _FINALIZATION_TASKS.discard(completed)
-        dictation_admission.release(admission_token)
+        _INFERENCE_TASKS.discard(completed)
+        if admission_token is not None:
+            dictation_admission.release(admission_token)
 
     task.add_done_callback(done)
 
@@ -379,7 +709,7 @@ async def run_admitted_inference(
 
 
 async def shutdown_transcription_stream_runtime() -> None:
-    tasks = tuple(task for task in _FINALIZATION_TASKS if not task.done())
+    tasks = tuple(task for task in _INFERENCE_TASKS if not task.done())
     if tasks:
         await asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True)
 
@@ -402,7 +732,8 @@ async def handle_transcription_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
     limits = stream_limits()
     admission_token: str | None = None
-    inference_started = False
+    scheduler: PreviewScheduler | None = None
+    receive_task: asyncio.Task[dict[str, Any]] | None = None
 
     try:
         init_message = await _receive_message(
@@ -462,41 +793,91 @@ async def handle_transcription_websocket(websocket: WebSocket) -> None:
         )
 
         buffer = PCMStreamBuffer(limits)
-        while True:
-            message = await _receive_message(
-                websocket,
-                timeout_seconds=settings.whisper_stream_idle_timeout_seconds,
-            )
-            if message.get("type") == "websocket.disconnect":
-                return
+        scheduler = PreviewScheduler(policy=preview_policy())
+        finished = False
 
-            if get_session(raw_session, touch=False) is None:
-                raise StreamProtocolError(
-                    "session_expired",
-                    "La session n'est plus valide.",
+        while not finished:
+            if receive_task is None:
+                receive_task = asyncio.create_task(
+                    _receive_message(
+                        websocket,
+                        timeout_seconds=settings.whisper_stream_idle_timeout_seconds,
+                    )
                 )
 
-            binary = message.get("bytes")
-            if isinstance(binary, bytes):
-                buffer.append_frame(binary)
-                continue
+            completion_task: asyncio.Task[None] | None = None
+            wait_for: set[asyncio.Task[Any]] = {receive_task}
+            if scheduler.has_tracked_inference:
+                completion_task = asyncio.create_task(scheduler.wait_for_completion())
+                wait_for.add(completion_task)
 
-            text = message.get("text")
-            if not isinstance(text, str):
-                raise StreamProtocolError(
-                    "invalid_message",
-                    "Message WebSocket non pris en charge.",
+            done, _pending = await asyncio.wait(
+                wait_for,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if receive_task in done:
+                message = receive_task.result()
+                receive_task = None
+
+                if message.get("type") == "websocket.disconnect":
+                    scheduler.begin_finalization()
+                    return
+
+                if get_session(raw_session, touch=False) is None:
+                    raise StreamProtocolError(
+                        "session_expired",
+                        "La session n'est plus valide.",
+                    )
+
+                binary = message.get("bytes")
+                if isinstance(binary, bytes):
+                    buffer.append_frame(binary)
+                    scheduler.consider_snapshot(
+                        buffer.pcm_bytes,
+                        total_samples=buffer.total_samples,
+                    )
+                else:
+                    text = message.get("text")
+                    if not isinstance(text, str):
+                        raise StreamProtocolError(
+                            "invalid_message",
+                            "Message WebSocket non pris en charge.",
+                        )
+                    payload = _json_message(
+                        text,
+                        max_bytes=limits.max_message_bytes,
+                    )
+                    last_sequence, total_samples = _validate_finish(payload)
+                    buffer.finish(
+                        last_sequence=last_sequence,
+                        total_samples=total_samples,
+                    )
+                    scheduler.begin_finalization()
+                    finished = True
+
+            update = scheduler.collect_completed(
+                current_total_samples=buffer.total_samples,
+            )
+            if update is not None and not finished:
+                await websocket.send_json(
+                    {
+                        "type": "partial",
+                        "dictation_id": dictation_id,
+                        "revision": update.revision,
+                        "text": update.text,
+                        "covered_samples": update.covered_samples,
+                    }
                 )
-            payload = _json_message(
-                text,
-                max_bytes=limits.max_message_bytes,
-            )
-            last_sequence, total_samples = _validate_finish(payload)
-            buffer.finish(
-                last_sequence=last_sequence,
-                total_samples=total_samples,
-            )
-            break
+
+            if completion_task is not None and not completion_task.done():
+                completion_task.cancel()
+                await asyncio.gather(completion_task, return_exceptions=True)
+
+        await scheduler.wait_for_active_before_final(
+            current_total_samples=buffer.total_samples,
+            timeout_seconds=settings.whisper_stream_finalization_timeout_seconds,
+        )
 
         if get_session(raw_session, touch=False) is None:
             raise StreamProtocolError(
@@ -504,24 +885,48 @@ async def handle_transcription_websocket(websocket: WebSocket) -> None:
                 "La session n'est plus valide.",
             )
 
-        samples = pcm16le_to_float32(buffer.pcm_bytes)
+        final_pcm = buffer.pcm_bytes
+        assert admission_token is not None
         token_for_job = admission_token
-        inference_started = True
+        admission_token = None
+        final_started = perf_counter()
         result = await run_admitted_inference(
             lambda: transcribe_audio_samples(
-                samples,
+                pcm16le_to_float32(final_pcm),
                 profile=TranscriptionProfile.FINAL,
             ),
             admission_token=token_for_job,
             timeout_seconds=settings.whisper_stream_finalization_timeout_seconds,
         )
-        admission_token = None
+        final_ms = max(0.0, (perf_counter() - final_started) * 1000)
 
         if get_session(raw_session, touch=False) is None:
             raise StreamProtocolError(
                 "session_expired",
                 "La session n'est plus valide.",
             )
+
+        metrics = scheduler.metrics_snapshot(final_ms=final_ms)
+        logger.info(
+            "Dictée WebSocket terminée dictation_id=%s covered_samples=%s "
+            "preview_requests=%s preview_started=%s preview_replaced=%s "
+            "preview_emitted=%s preview_obsolete=%s preview_errors=%s "
+            "preview_wait_max_ms=%s final_wait_for_preview_ms=%s "
+            "max_audio_lag_seconds=%s preview_cost_ms=%s final_cost_ms=%s",
+            dictation_id,
+            buffer.total_samples,
+            metrics["preview_requests"],
+            metrics["preview_started"],
+            metrics["preview_replaced"],
+            metrics["preview_emitted"],
+            metrics["preview_obsolete_results"],
+            metrics["preview_errors"],
+            metrics["preview_queue_wait_max_ms"],
+            metrics["final_wait_for_preview_ms"],
+            metrics["max_audio_lag_seconds"],
+            metrics["profile_cost_ms"]["preview"],
+            metrics["profile_cost_ms"]["final"],
+        )
 
         await websocket.send_json(
             {
@@ -570,5 +975,12 @@ async def handle_transcription_websocket(websocket: WebSocket) -> None:
             close_code=INTERNAL_ERROR_CLOSE_CODE,
         )
     finally:
-        if admission_token is not None and not inference_started:
-            dictation_admission.release(admission_token)
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+            await asyncio.gather(receive_task, return_exceptions=True)
+
+        if admission_token is not None:
+            if scheduler is not None and scheduler.has_active_inference:
+                scheduler.abandon_and_release_admission(admission_token)
+            else:
+                dictation_admission.release(admission_token)

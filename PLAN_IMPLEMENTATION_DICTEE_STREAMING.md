@@ -257,34 +257,52 @@ Les SHA des commits sont consultables dans Git ; ne pas insérer le SHA d'un com
 
 ## 8. Étape 4 — Ordonnancer des aperçus sans accumuler de calculs
 
+**Statut :** terminé localement ; mesure Whisper sur le VPS cible encore requise.
+
 **Objectif :** anticiper du texte sans saturer le moteur ni allonger inutilement la finalisation.
 
 **Fichiers concernés :** `transcription_stream.py`, intégration limitée dans `main.py`, configuration et tests de concurrence.
 
 ### Travaux
 
-- [ ] Maintenir une seule inférence active et une seule demande d'aperçu remplaçable.
-- [ ] Continuer la réception audio pendant l'inférence ; utiliser des instantanés immuables pour les calculs.
-- [ ] Ne pas retraiter un instantané inchangé ; gérer une hypothèse vide comme un état normal.
-- [ ] Donner priorité à la finalisation et supprimer l'aperçu en attente à l'arrêt.
-- [ ] Ne pas promettre d'interrompre le calcul natif déjà démarré ; conserver l'exclusivité jusqu'à sa terminaison réelle.
-- [ ] Ajouter `partial` avec identifiant de dictée, révision et hypothèse complète remplaçable.
-- [ ] Ignorer les résultats obsolètes et empêcher leur insertion dans une autre dictée.
-- [ ] Adapter la cadence aux mesures, sans minuteur alimentant une file illimitée.
-- [ ] Suspendre les aperçus coûteux sur une portion trop longue, sans abandonner l'audio ni la finalisation globale.
-- [ ] Exposer les métriques : attente, inférences, demandes remplacées, retard audio et coût par profil.
+- [x] Maintenir une seule inférence active et une seule demande d'aperçu remplaçable.
+- [x] Continuer la réception audio pendant l'inférence ; utiliser des instantanés immuables pour les calculs.
+- [x] Ne pas retraiter un instantané inchangé ; gérer une hypothèse vide comme un état normal.
+- [x] Donner priorité à la finalisation et supprimer l'aperçu en attente à l'arrêt.
+- [x] Ne pas promettre d'interrompre le calcul natif déjà démarré ; conserver l'exclusivité jusqu'à sa terminaison réelle.
+- [x] Ajouter `partial` avec identifiant de dictée, révision et hypothèse complète remplaçable.
+- [x] Ignorer les résultats obsolètes et empêcher leur insertion dans une autre dictée.
+- [x] Adapter la cadence aux mesures, sans minuteur alimentant une file illimitée.
+- [x] Suspendre les aperçus coûteux sur une portion trop longue, sans abandonner l'audio ni la finalisation globale.
+- [x] Exposer les métriques : attente, inférences, demandes remplacées, retard audio et coût par profil.
 
 Paramètres candidats uniquement : premier calcul vers 1 seconde de parole, départs suivants espacés d'au moins 2 à 3 secondes, suspension vers 10 à 12 secondes de portion ouverte. Leur validation dépend du benchmark de l'étape 2.
 
 ### Validation
 
-- [ ] Faux moteur lent : aucun chevauchement d'inférences et aucune croissance de file d'aperçus.
-- [ ] Arrêt pendant un calcul : aucun nouvel aperçu ne retarde volontairement la finalisation.
-- [ ] Déconnexion et shutdown : aucun travail orphelin non suivi.
-- [ ] Les mises à jour sont remplacées, pas concaténées.
-- [ ] Mesure du coût d'une dictée courte sans pause, y compris le cas défavorable d'un aperçu en cours à l'arrêt.
+- [x] Faux moteur lent : aucun chevauchement d'inférences et aucune croissance de file d'aperçus.
+- [x] Arrêt pendant un calcul : aucun nouvel aperçu ne retarde volontairement la finalisation.
+- [x] Déconnexion et shutdown : aucun travail orphelin non suivi.
+- [x] Les mises à jour sont remplacées, pas concaténées.
+- [ ] Mesure du coût réel Whisper d'une dictée courte sans pause sur le VPS cible, y compris le cas défavorable d'un aperçu en cours à l'arrêt.
 
-**Critère de sortie :** ordonnancement borné et finalisation globale toujours disponible comme référence de qualité.
+**Résultats locaux :**
+- `PreviewScheduler` maintient au plus une inférence active et un instantané en attente ; une demande plus récente remplace l'attente précédente.
+- La réception WebSocket continue pendant les aperçus. Les instantanés sont des copies immuables du PCM déjà reçu.
+- Les résultats rendus obsolètes par une demande plus récente, la suspension ou `finish` ne sont pas envoyés au client.
+- `partial` contient `dictation_id`, une révision monotone, l'hypothèse complète et la couverture en échantillons ; une hypothèse vide est valide.
+- `finish` supprime l'aperçu en attente, attend seulement le calcul natif déjà lancé, puis exécute la transcription globale avec le profil `final`.
+- Cadence provisoire configurable : premier aperçu à 1,0 s d'audio reçu, demandes suivantes espacées de 2,5 s d'audio, suspension après 10,0 s de portion continue. Aucun timer ne produit de file de travaux.
+- Les métriques journalisées couvrent demandes, inférences lancées, remplacements, résultats obsolètes, attente, retard audio et coût mural cumulé par profil.
+- Tests locaux avec faux moteur lent : une seule inférence simultanée, attente remplaçable bornée, attente de finalisation mesurable et shutdown sans tâche d'inférence orpheline.
+- `.venv/bin/pytest -q tests/test_transcription_stream.py` : 24 tests réussis.
+- `.venv/bin/pytest -q` : 175 tests réussis.
+- `git diff --check` sur les fichiers de l'étape : aucune erreur.
+- Aucun benchmark Whisper réel ni accès VPS effectué dans cette étape ; les valeurs 1,0 / 2,5 / 10,0 s restent provisoires.
+
+**Critère de sortie local :** ordonnancement borné et finalisation globale toujours disponible comme référence de qualité.
+
+**Jalon de performance restant :** exécuter le benchmark autorisé sur le VPS avant de considérer la cadence validée pour le déploiement.
 
 **Commit :** `feat: schedule bounded dictation previews`.
 
@@ -443,6 +461,7 @@ Pour reprendre : lire ce document, inspecter `git status`, vérifier la branche 
 | 2026-09-29 | 0 | Dépôt propre sur `main`, base `705b57b`, branche `feat/incremental-dictation` créée. Plan initial uniquement ; aucun code applicatif modifié, aucun benchmark VPS relancé. |
 | 2026-09-29 | 2 | Outillage local de comparaison `final` / `preview` et simulateur déterministe ajoutés. 10 tests ciblés, 22 tests transcription et 149 tests complets réussis ; `git diff --check` OK. Aucun benchmark Whisper réel ni accès VPS effectué ; les mesures de la machine cible restent ouvertes. |
 | 2026-09-29 | 3 | Transport PCM WebSocket sécurisé ajouté derrière feature flag désactivé : origine/session/CSRF, séquences et couverture, limites mémoire/temps, admission commune POST/WebSocket et finalisation globale. Uvicorn limite les messages à 16 Kio et la file à 4. 169 tests complets réussis localement ; aucun accès VPS ni activation du streaming. |
+| 2026-09-30 | 4 | Ordonnanceur borné d'aperçus ajouté : une inférence active, une demande remplaçable, réception audio concurrente, résultats obsolètes ignorés, `partial` révisé et finalisation globale prioritaire. 24 tests streaming et 175 tests complets réussis ; aucun benchmark Whisper réel ni accès VPS. La cadence 1,0 / 2,5 / 10,0 s reste provisoire. |
 
 ## 14. Références techniques du cadrage
 

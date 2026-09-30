@@ -103,6 +103,15 @@ class Settings:
     whisper_stream_finalization_timeout_seconds: float = float(
         os.getenv("ETPOS_WHISPER_STREAM_FINALIZATION_TIMEOUT_SECONDS", "120")
     )
+    whisper_stream_preview_first_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_PREVIEW_FIRST_SECONDS", "1.0")
+    )
+    whisper_stream_preview_interval_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_PREVIEW_INTERVAL_SECONDS", "2.5")
+    )
+    whisper_stream_preview_suspend_seconds: float = float(
+        os.getenv("ETPOS_WHISPER_STREAM_PREVIEW_SUSPEND_SECONDS", "10.0")
+    )
     whisper_hotwords_path: Path | None = (
         Path(os.environ["ETPOS_WHISPER_HOTWORDS_PATH"]).expanduser()
         if os.getenv("ETPOS_WHISPER_HOTWORDS_PATH")
