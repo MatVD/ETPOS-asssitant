@@ -6,13 +6,18 @@ import tempfile
 from pathlib import Path
 from time import perf_counter
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, WebSocket, status
 
 from ..config import settings
 from ..transcription import (
     TranscriptionError,
     TranscriptionInputError,
     transcribe_audio_file,
+)
+from ..transcription_stream import (
+    dictation_admission,
+    handle_transcription_websocket,
+    run_admitted_inference,
 )
 from .deps import require_api_session, require_csrf
 
@@ -42,6 +47,13 @@ def _declared_length(request: Request) -> int | None:
         return int(raw)
     except ValueError:
         return None
+
+
+def _transcribe_and_cleanup(path: Path):
+    try:
+        return transcribe_audio_file(path)
+    finally:
+        path.unlink(missing_ok=True)
 
 
 async def _store_limited_audio(request: Request, suffix: str) -> Path:
@@ -97,14 +109,36 @@ async def transcribe(request: Request):
             detail="Format audio non pris en charge.",
         )
 
+    admission_token: str | None = None
+    inference_started = False
+    streaming_enabled = getattr(settings, "whisper_streaming_enabled", False)
+    if streaming_enabled:
+        admission_token = dictation_admission.try_acquire()
+        if admission_token is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Une autre dictée est déjà en cours.",
+            )
+
     request_started = perf_counter()
     upload_started = perf_counter()
-    path = await _store_limited_audio(request, suffix)
-    upload_ms = (perf_counter() - upload_started) * 1000
-    upload_bytes = path.stat().st_size
+    path: Path | None = None
     try:
+        path = await _store_limited_audio(request, suffix)
+        upload_ms = (perf_counter() - upload_started) * 1000
+        upload_bytes = path.stat().st_size
+
         processing_started = perf_counter()
-        result = await asyncio.to_thread(transcribe_audio_file, path)
+        if streaming_enabled:
+            assert admission_token is not None
+            inference_started = True
+            result = await run_admitted_inference(
+                lambda: _transcribe_and_cleanup(path),
+                admission_token=admission_token,
+            )
+            admission_token = None
+        else:
+            result = await asyncio.to_thread(transcribe_audio_file, path)
         processing_ms = (perf_counter() - processing_started) * 1000
     except TranscriptionInputError as exc:
         logger.info(
@@ -133,7 +167,10 @@ async def transcribe(request: Request):
             detail="Le service de transcription est temporairement indisponible.",
         ) from exc
     finally:
-        path.unlink(missing_ok=True)
+        if path is not None and not (streaming_enabled and inference_started):
+            path.unlink(missing_ok=True)
+        if admission_token is not None and not inference_started:
+            dictation_admission.release(admission_token)
 
     response_started = perf_counter()
     response = {
@@ -152,3 +189,8 @@ async def transcribe(request: Request):
         (perf_counter() - request_started) * 1000,
     )
     return response
+
+
+@router.websocket("/transcribe/stream")
+async def transcribe_stream(websocket: WebSocket) -> None:
+    await handle_transcription_websocket(websocket)

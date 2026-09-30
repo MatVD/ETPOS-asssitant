@@ -63,6 +63,13 @@ from .transcription import (
     load_hotwords,
     transcribe_audio_file,
 )
+from .transcription_evaluation import (
+    DEFAULT_BLOCK_SECONDS,
+    DEFAULT_PAUSE_MS_VALUES,
+    DEFAULT_WINDOW_SECONDS,
+    parse_seconds_csv,
+    run_incremental_benchmark,
+)
 
 
 def cmd_init_db(_args) -> None:
@@ -764,8 +771,97 @@ def cmd_whisper_benchmark(args) -> None:
     path = Path(args.path).expanduser()
     if not path.is_file():
         raise SystemExit(f"Fichier audio introuvable : {path}")
-    if args.repeats < 2:
+
+    repeats = args.repeats
+    if repeats is None:
+        repeats = 3 if args.incremental else 6
+    if repeats < 2:
         raise SystemExit("--repeats doit être supérieur ou égal à 2.")
+
+    if not args.incremental:
+        incremental_options = (
+            args.durations is not None
+            or args.simulate_preview_at is not None
+            or args.simulate_stop_at is not None
+            or args.report is not None
+            or args.block_ms != DEFAULT_BLOCK_SECONDS * 1000
+            or args.pause_finalization
+            or args.pause_ms is not None
+            or args.min_portion_seconds != 2.0
+        )
+        if incremental_options:
+            raise SystemExit(
+                "Les options d'évaluation incrémentale exigent --incremental."
+            )
+
+    if args.incremental:
+        try:
+            durations = parse_seconds_csv(
+                args.durations
+                or ",".join(f"{value:g}" for value in DEFAULT_WINDOW_SECONDS),
+                label="--durations",
+            )
+            preview_times = (
+                parse_seconds_csv(
+                    args.simulate_preview_at,
+                    label="--simulate-preview-at",
+                )
+                if args.simulate_preview_at
+                else None
+            )
+            if preview_times is not None and args.simulate_stop_at is None:
+                raise ValueError(
+                    "--simulate-stop-at est requis avec --simulate-preview-at."
+                )
+            if preview_times is None and args.simulate_stop_at is not None:
+                raise ValueError(
+                    "--simulate-preview-at est requis avec --simulate-stop-at."
+                )
+            if args.block_ms <= 0:
+                raise ValueError("--block-ms doit être strictement positif.")
+            if args.min_portion_seconds <= 0:
+                raise ValueError("--min-portion-seconds doit être strictement positif.")
+
+            pause_ms_values = None
+            if args.pause_finalization:
+                raw_pause_ms = args.pause_ms or ",".join(
+                    str(value) for value in DEFAULT_PAUSE_MS_VALUES
+                )
+                pause_ms_values = tuple(
+                    int(value.strip())
+                    for value in raw_pause_ms.split(",")
+                    if value.strip()
+                )
+                if not pause_ms_values or any(value <= 0 for value in pause_ms_values):
+                    raise ValueError("--pause-ms doit contenir des entiers positifs.")
+
+            report = run_incremental_benchmark(
+                path,
+                durations_seconds=durations,
+                repeats=repeats,
+                preview_request_times_seconds=preview_times,
+                simulation_stop_at_seconds=args.simulate_stop_at,
+                block_seconds=args.block_ms / 1000,
+                pause_ms_values=pause_ms_values,
+                min_portion_seconds=args.min_portion_seconds,
+                project_root=Path.cwd(),
+            )
+        except (
+            RuntimeError,
+            TranscriptionError,
+            TranscriptionInputError,
+            ValueError,
+        ) as exc:
+            raise SystemExit(str(exc)) from exc
+
+        payload = json.dumps(report, ensure_ascii=False, indent=2)
+        print(payload)
+        if args.report:
+            report_path = Path(args.report).expanduser()
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(payload + "\n", encoding="utf-8")
+            print(f"Rapport écrit : {report_path}")
+        return
 
     print(
         "Benchmark Whisper : "
@@ -773,11 +869,11 @@ def cmd_whisper_benchmark(args) -> None:
         f"device={settings.whisper_device} "
         f"compute_type={settings.whisper_compute_type} "
         f"cpu_threads={settings.whisper_cpu_threads} "
-        f"repeats={args.repeats}"
+        f"repeats={repeats}"
     )
 
     runs: list[dict] = []
-    for index in range(1, args.repeats + 1):
+    for index in range(1, repeats + 1):
         try:
             result = transcribe_audio_file(path)
         except (TranscriptionError, TranscriptionInputError) as exc:
@@ -916,7 +1012,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mesurer Whisper de manière répétable sur un fichier audio local",
     )
     p.add_argument("path", help="Fichier audio de référence à transcrire")
-    p.add_argument("--repeats", type=int, default=6, help="Nombre d'appels ; le premier est froid")
+    p.add_argument(
+        "--repeats",
+        type=int,
+        help="Nombre d'appels par mesure ; défaut 6 en mode classique, 3 en mode incrémental",
+    )
+    p.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Comparer final/preview sur des fenêtres audio décodées une seule fois",
+    )
+    p.add_argument(
+        "--durations",
+        help="Fenêtres en secondes pour --incremental, séparées par des virgules ; défaut 1,2,4,6,10",
+    )
+    p.add_argument(
+        "--simulate-preview-at",
+        help="Instants de demandes d'aperçu en secondes, séparés par des virgules",
+    )
+    p.add_argument(
+        "--simulate-stop-at",
+        type=float,
+        help="Instant explicite d'arrêt pour la simulation incrémentale",
+    )
+    p.add_argument(
+        "--block-ms",
+        type=float,
+        default=DEFAULT_BLOCK_SECONDS * 1000,
+        help="Taille conceptuelle des blocs audio de la simulation",
+    )
+    p.add_argument(
+        "--pause-finalization",
+        action="store_true",
+        help="Comparer la finalisation globale aux portions fermées par des pauses Silero",
+    )
+    p.add_argument(
+        "--pause-ms",
+        help="Seuils de pause à comparer en millisecondes ; défaut 500,600,700",
+    )
+    p.add_argument(
+        "--min-portion-seconds",
+        type=float,
+        default=2.0,
+        help="Durée minimale regroupée avant de finaliser une portion",
+    )
+    p.add_argument(
+        "--report",
+        help="Écrire le rapport JSON incrémental à cet emplacement",
+    )
     p.set_defaults(func=cmd_whisper_benchmark)
 
     p = sub.add_parser("eval-retrieval", help="Mesurer le retrieval sur un benchmark JSONL")

@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..citations import normalize_citation_link
+from ..config import settings
 from ..db import app_db
 from ..markdown import render_safe_markdown
 from .deps import current_session
@@ -63,6 +64,7 @@ def _page_context(request: Request, session, conversation_id: int | None = None)
         "conversation_exists": conversation_exists,
         "messages": messages,
         "pending_response": bool(messages and messages[-1]["role"] == "user"),
+        "voice_streaming_enabled": settings.whisper_streaming_enabled,
     }
 
 

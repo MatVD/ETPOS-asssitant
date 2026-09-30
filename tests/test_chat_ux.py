@@ -11,6 +11,7 @@ from starlette.requests import Request
 
 import etpos_assistant.db as db_module
 import etpos_assistant.routers.chat as chat_module
+import etpos_assistant.routers.pages as pages_module
 from etpos_assistant.routers.pages import _page_context
 
 
@@ -71,6 +72,11 @@ def test_init_app_db_adds_answer_status_to_legacy_messages(monkeypatch, tmp_path
 
 def test_page_context_keeps_full_conversation_history_accessible(monkeypatch, tmp_path):
     monkeypatch.setattr(db_module, "settings", _settings(tmp_path))
+    monkeypatch.setattr(
+        pages_module,
+        "settings",
+        SimpleNamespace(whisper_streaming_enabled=True),
+    )
     db_module.init_app_db()
 
     with db_module.app_db() as conn:
@@ -119,6 +125,7 @@ def test_page_context_keeps_full_conversation_history_accessible(monkeypatch, tm
     ]
     assert context["messages"][1]["answer_status"] == "partial"
     assert context["pending_response"] is False
+    assert context["voice_streaming_enabled"] is True
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,8 @@ backups/*.tmp
 snapshots/*.html
 snapshots/*.support.json
 eval/results/*.json
+eval/transcription_audio/
+eval/transcription_corpus.local.json
 !eval/results/.gitkeep
 !data/.gitkeep
 !snapshots/.gitkeep

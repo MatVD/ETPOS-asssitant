@@ -105,23 +105,72 @@ Puis ouvrir : http://127.0.0.1:8787
 
 ### Dictée vocale locale
 
-Le bouton microphone du compositeur enregistre uniquement après une action explicite de l'utilisateur. Le navigateur utilise `getUserMedia()` + `MediaRecorder`, choisit un format audio supporté (`webm/opus`, `mp4` ou `ogg/opus`), puis envoie le blob brut à `POST /api/transcribe`.
+Le mode de référence reste simple et activé indépendamment du streaming : après action explicite de l'utilisateur, le navigateur utilise `getUserMedia()` + `MediaRecorder`, choisit un format audio supporté (`webm/opus`, `mp4` ou `ogg/opus`) puis envoie le blob brut à `POST /api/transcribe`. L'audio est borné, stocké temporairement uniquement pendant le traitement puis supprimé ; le texte reste modifiable avant envoi au chat.
 
-Le backend :
-- exige la session et le jeton CSRF ;
-- limite le corps audio à 8 Mio et la durée décodée à 60 secondes par défaut ;
-- écrit l'audio dans un fichier temporaire supprimé après traitement ;
-- force la transcription française avec Whisper `small`, `faster-whisper`, CPU `int8` et Silero VAD ;
-- applique les termes de `config/transcription_hotwords.txt` comme `hotwords` afin d'aider les termes métier sans coder de réponse ETPOS ;
-- renvoie uniquement le texte, qui est inséré dans le champ et reste modifiable avant envoi.
-
-Le modèle est chargé paresseusement et conservé en mémoire. Pour éviter le téléchargement au premier clic, le précharger après installation :
+Le modèle est Whisper `small` via `faster-whisper`, français forcé, CPU `int8` et Silero VAD. Il est chargé une fois par worker puis réutilisé. Le fichier `config/transcription_hotwords.txt` aide la reconnaissance du vocabulaire ETPOS sans contenir de réponse métier. Pour éviter un téléchargement au premier clic :
 
 ```bash
 make whisper-preload
 ```
 
-En production, utiliser un cache inscriptible hors du home protégé, par exemple `ETPOS_WHISPER_DOWNLOAD_ROOT=/var/lib/etpos-assistant/whisper`. Après préchargement, `ETPOS_WHISPER_LOCAL_FILES_ONLY=true` permet de refuser tout téléchargement de modèle au runtime. `ETPOS_WHISPER_PRELOAD_ON_STARTUP=true` charge alors le modèle au démarrage du worker afin que le premier utilisateur ne paie pas le coût de chargement.
+En production, utiliser un cache inscriptible hors du home protégé, par exemple `ETPOS_WHISPER_DOWNLOAD_ROOT=/var/lib/etpos-assistant/whisper`. Après préchargement, `ETPOS_WHISPER_LOCAL_FILES_ONLY=true` interdit le téléchargement au runtime et `ETPOS_WHISPER_PRELOAD_ON_STARTUP=true` charge le modèle au démarrage du worker.
+
+#### Streaming incrémental expérimental
+
+Le chemin incrémental est préparé mais **désactivé par défaut** :
+
+```text
+ETPOS_WHISPER_STREAMING_ENABLED=false
+ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED=false
+```
+
+Quand le premier flag est activé et que le navigateur supporte WebSocket + AudioWorklet avant la capture, le frontend ouvre `/api/transcribe/stream` et envoie du PCM mono 16 kHz signé 16 bits. Si le streaming est désactivé ou incompatible avant capture, le MediaRecorder classique reste le chemin de repli. Une erreur survenue après le début d'une session incrémentale n'entraîne pas automatiquement une seconde capture classique.
+
+Paramètres serveur actuellement prévus :
+
+| Variable | Défaut | Rôle |
+|---|---:|---|
+| `ETPOS_WHISPER_STREAMING_ENABLED` | `false` | Active le chemin WebSocket. |
+| `ETPOS_WHISPER_MAX_DURATION_SECONDS` | `60` | Durée maximale commune de dictée. |
+| `ETPOS_WHISPER_STREAM_MAX_MESSAGE_BYTES` | `16384` | Taille maximale configurée d'un message ; le transport impose aussi un plafond interne de 16 Kio. |
+| `ETPOS_WHISPER_STREAM_NOMINAL_CHUNK_BYTES` | `8000` | Taille nominale d'un bloc PCM envoyé au navigateur. |
+| `ETPOS_WHISPER_STREAM_INIT_TIMEOUT_SECONDS` | `10` | Délai pour recevoir `init`. |
+| `ETPOS_WHISPER_STREAM_IDLE_TIMEOUT_SECONDS` | `15` | Délai maximal sans message pendant la capture. |
+| `ETPOS_WHISPER_STREAM_FINALIZATION_TIMEOUT_SECONDS` | `120` | Délai maximal de finalisation. |
+| `ETPOS_WHISPER_STREAM_PREVIEW_FIRST_SECONDS` | `1.0` | Première demande d'aperçu. |
+| `ETPOS_WHISPER_STREAM_PREVIEW_INTERVAL_SECONDS` | `2.5` | Intervalle minimal entre demandes d'aperçu. |
+| `ETPOS_WHISPER_STREAM_PREVIEW_SUSPEND_SECONDS` | `10.0` | Suspension des aperçus sur parole continue longue. |
+| `ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED` | `false` | Active l'optimisation finale par portions validées. |
+| `ETPOS_WHISPER_STREAM_PAUSE_MS` | `600` | Seuil expérimental de pause Silero. |
+| `ETPOS_WHISPER_STREAM_MIN_PORTION_SECONDS` | `2.0` | Durée minimale regroupée avant une finalisation de portion. |
+
+Le protocole exige l'origine exacte, une session valide et le CSRF dans `init`. Séquences et positions PCM doivent être contiguës. Le serveur annonce `max_queue_messages=4` au frontend : celui-ci refuse de continuer si `WebSocket.bufferedAmount` dépasse l'équivalent de cette borne. Le service reste à **un worker** et l'admission commune au POST et au WebSocket n'autorise qu'une dictée lourde à la fois ; un second utilisateur reçoit un refus `busy` plutôt que de lancer une seconde inférence CPU concurrente.
+
+Pour Uvicorn 0.49.0, le déploiement préparé fixe explicitement `--ws websockets-sansio --ws-max-size 16384`. Cette implémentation moderne de `websockets` applique la taille maximale et suspend la lecture réseau tant que le message ASGI courant n'a pas été consommé ; `--ws-max-queue` n'est donc volontairement pas utilisé. Le chemin legacy `websockets`, qui honore cette option, dépend déjà de `websockets.legacy`.
+
+La finalisation aux pauses ne doit pas être activée normalement avant comparaison A/B sur de vrais audios. L'outil local prévu est :
+
+```bash
+.venv/bin/etpos-assistant whisper-benchmark /tmp/etpos-reference.webm \
+  --incremental \
+  --pause-finalization \
+  --pause-ms 500,600,700 \
+  --report eval/results/whisper-pause-reference.json
+```
+
+Le rapport distingue la finale globale de référence, les portions réellement finalisées et le reste terminal. La décision d'activation doit contrôler les mots, termes ETPOS, nombres, négations, corrections orales, omissions, répétitions, délai après arrêt et coût CPU.
+
+#### Préparation VPS et rollback
+
+Aucune commande ci-dessous n'est une autorisation d'intervenir sur le VPS. Lorsqu'une intervention distincte sera validée, procéder de manière réversible :
+
+1. déployer d'abord le code avec `ETPOS_WHISPER_STREAMING_ENABLED=false` et vérifier santé, login, chat SSE et dictée POST classique ;
+2. appliquer l'exemple systemd avec un worker et `websockets-sansio`, puis l'emplacement Nginx exact `/api/transcribe/stream` avec les en-têtes Upgrade ; le bloc `location /` du chat reste inchangé ;
+3. vérifier la CSP et le handshake sur Brave/Chromium, Safari et Firefox avant activation ; la politique reste `connect-src 'self'` et aucun joker WebSocket ne doit être ajouté ;
+4. activer seulement `ETPOS_WHISPER_STREAMING_ENABLED=true`, redémarrer le service et effectuer une recette limitée en surveillant refus `busy`, timeouts, latence et CPU ;
+5. laisser `ETPOS_WHISPER_STREAM_PAUSE_FINALIZATION_ENABLED=false` tant que l'A/B qualité/performance n'est pas concluant.
+
+Rollback fonctionnel immédiat : remettre `ETPOS_WHISPER_STREAMING_ENABLED=false` puis redémarrer le service. Le template rebascule alors sur MediaRecorder + `POST /api/transcribe`, avec le même modèle Whisper et sans migration de données. Le bloc Nginx WebSocket peut rester inactif ou être retiré séparément après validation du retour arrière.
 
 Pour calibrer le CPU du serveur sur un même fichier audio de référence :
 
@@ -131,7 +180,7 @@ ETPOS_WHISPER_CPU_THREADS=4 .venv/bin/etpos-assistant whisper-benchmark /tmp/etp
 ETPOS_WHISPER_CPU_THREADS=6 .venv/bin/etpos-assistant whisper-benchmark /tmp/etpos-reference.webm --repeats 6
 ```
 
-La commande conserve le texte transcrit pour chaque appel et calcule la médiane des cinq appels chauds, ce qui permet de comparer la latence sans masquer une éventuelle régression de reconnaissance métier.
+La commande conserve le texte transcrit pour chaque appel afin de comparer la latence sans masquer une éventuelle régression de reconnaissance métier.
 
 `make ingest` télécharge uniquement les sources activées dans `config/sources.json`. Le téléchargement n'a lieu qu'à l'ingestion, jamais à chaque question utilisateur.
 

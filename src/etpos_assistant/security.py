@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
-from fastapi import Request
+from fastapi import Request, WebSocket
 from argon2.exceptions import InvalidHashError, VerifyMismatchError, VerificationError
 
 from .config import settings
@@ -24,7 +24,7 @@ SESSION_COOKIE = "__Host-etpos_session" if settings.cookie_secure else "etpos_se
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
-def _peer_is_loopback(request: Request) -> bool:
+def _peer_is_loopback(request: Request | WebSocket) -> bool:
     if not request.client:
         return False
     try:
@@ -72,6 +72,33 @@ def same_origin_request(request: Request) -> bool:
             scheme = forwarded_proto
     host = request.headers.get("host", "").strip().lower()
     return bool(host) and source_origin == f"{scheme.lower()}://{host}"
+
+
+def same_origin_websocket(websocket: WebSocket) -> bool:
+    source = (websocket.headers.get("origin") or "").strip()
+    if not source:
+        return False
+
+    parsed = urlsplit(source)
+    source_origin = (
+        f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+        if parsed.scheme and parsed.netloc
+        else ""
+    )
+    if not source_origin:
+        return False
+
+    if settings.public_origin:
+        return source_origin == settings.public_origin.lower()
+
+    raw_scheme = websocket.url.scheme.lower()
+    scheme = {"ws": "http", "wss": "https"}.get(raw_scheme, raw_scheme)
+    if _peer_is_loopback(websocket):
+        forwarded_proto = websocket.headers.get("x-forwarded-proto", "").strip().lower()
+        if forwarded_proto in {"http", "https"}:
+            scheme = forwarded_proto
+    host = websocket.headers.get("host", "").strip().lower()
+    return bool(host) and source_origin == f"{scheme}://{host}"
 
 
 def utcnow() -> datetime:
@@ -131,7 +158,7 @@ def delete_session(raw_token: str | None) -> None:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(raw_token),))
 
 
-def get_session(raw_token: str | None):
+def get_session(raw_token: str | None, *, touch: bool = True):
     if not raw_token:
         return None
     now = iso(utcnow())
@@ -146,7 +173,7 @@ def get_session(raw_token: str | None):
             """,
             (_token_hash(raw_token), now),
         ).fetchone()
-        if row:
+        if row and touch:
             conn.execute(
                 "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
                 (now, row["session_id"]),

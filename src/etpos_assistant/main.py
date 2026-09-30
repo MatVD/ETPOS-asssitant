@@ -15,6 +15,7 @@ from .db import init_all
 from .security import same_origin_request
 from .rag import shutdown_provider_runtime
 from .transcription import get_transcription_model
+from .transcription_stream import shutdown_transcription_stream_runtime
 from .routers import (
     auth_router,
     chat_router,
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await shutdown_transcription_stream_runtime()
         await shutdown_provider_runtime()
 
 
